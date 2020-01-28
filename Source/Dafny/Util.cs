@@ -88,6 +88,14 @@ namespace Microsoft.Dafny {
       return cpy;
     }
 
+    public static List<A> Concat<A>(params List<A>[] xss) {
+      List<A> cpy = new List<A>();
+      foreach (var xs in xss) {
+        cpy.AddRange(xs);
+      }
+      return cpy;
+    }
+
     public static Dictionary<A,B> Dict<A,B>(IEnumerable<A> xs, IEnumerable<B> ys) {
       return Dict<A,B>(xs.Zip(ys));
     }

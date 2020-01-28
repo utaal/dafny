@@ -68,7 +68,7 @@ namespace Microsoft.Dafny {
 
   public class Main {
 
-      public static void MaybePrintProgram(Program program, string filename, bool afterResolver)
+      public static void MaybePrintProgram(Program program, string filename, bool afterResolver, bool forCompilation = false)
       {
           if (filename != null) {
               TextWriter tw;
@@ -78,7 +78,7 @@ namespace Microsoft.Dafny {
                   tw = new System.IO.StreamWriter(filename);
               }
               Printer pr = new Printer(tw, DafnyOptions.O.PrintMode);
-              pr.PrintProgram(program, afterResolver);
+              pr.PrintProgram(program, afterResolver, forCompilation);
           }
       }
 

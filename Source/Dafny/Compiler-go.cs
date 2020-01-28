@@ -1723,19 +1723,6 @@ namespace Microsoft.Dafny {
 
     // ----- Statements -------------------------------------------------------------
 
-    protected override void EmitMultiAssignment(List<ILvalue> wLhss, List<Type> lhsTypes, out List<TargetWriter> wRhss, List<Type> rhsTypes, TargetWriter wr) {
-      // TODO Go actually supports multi-assignment, but that will only work
-      // in the simple (but very typical) case where an lvalue represents an
-      // actual lvalue that is written via an assignment statement.  (Actually,
-      // currently *all* Go lvalues work this way, but in the future we could
-      // implement getters and setters via ILvalueWriter.)
-      //
-      // Given a way to inquire whether a given lvalue is an actual lvalue in
-      // the target, we could implement multi-assignment for the special case
-      // where all lvalues are real lvalues.
-      base.EmitMultiAssignment(wLhss, lhsTypes, out wRhss, rhsTypes, wr);
-    }
-
     protected override void EmitPrintStmt(TargetWriter wr, Expression arg) {
       wr.Write("_dafny.Print(");
       TrExpr(arg, wr, false);

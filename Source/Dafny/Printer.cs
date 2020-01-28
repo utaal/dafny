@@ -162,7 +162,7 @@ namespace Microsoft.Dafny {
       return sb.ToString(0, len);
     }
 
-    public void PrintProgram(Program prog, bool afterResolver) {
+    public void PrintProgram(Program prog, bool afterResolver, bool forCompilation = false) {
       Contract.Requires(prog != null);
       this.afterResolver = afterResolver;
       if (Bpl.CommandLineOptions.Clo.ShowEnv != Bpl.CommandLineOptions.ShowEnvironment.Never) {
@@ -184,11 +184,25 @@ namespace Microsoft.Dafny {
         wr.WriteLine("*/");
       }
       wr.WriteLine();
-      PrintCallGraph(prog.DefaultModuleDef, 0);
-      PrintTopLevelDecls(prog.DefaultModuleDef.TopLevelDecls, 0, null, Path.GetFullPath(prog.FullName));
-      foreach (var tup in prog.DefaultModuleDef.PrefixNamedModules) {
-        var decls = new List<TopLevelDecl>() { tup.Item2 };
-        PrintTopLevelDecls(decls, 0, tup.Item1, Path.GetFullPath(prog.FullName));
+      var fullPath = Path.GetFullPath(prog.FullName);
+      if (forCompilation) {
+        var defaultModule = prog.CompileModules.Find(mod => mod.IsDefaultModule);
+        Contract.Assert(defaultModule != null, "can't find default module");
+        PrintCallGraph(defaultModule, 0);
+        PrintTopLevelDecls(defaultModule.TopLevelDecls, 0, null, fullPath);
+        foreach (var module in prog.CompileModules) {
+          if (module.IsDefaultModule) {
+            continue;
+          }
+          PrintModuleDefinition(module, scope: null, indent: 0, module.PrefixIds, fullPath);
+        }
+      } else {
+        PrintCallGraph(prog.DefaultModuleDef, 0);
+        PrintTopLevelDecls(prog.DefaultModuleDef.TopLevelDecls, 0, null, fullPath);
+        foreach (var tup in prog.DefaultModuleDef.PrefixNamedModules) {
+          var decls = new List<TopLevelDecl>() { tup.Item2 };
+          PrintTopLevelDecls(decls, 0, tup.Item1, fullPath);
+        }
       }
       wr.Flush();
     }

@@ -334,27 +334,6 @@ namespace Microsoft.Dafny {
       return w;
     }
 
-    protected virtual void EmitMultiAssignment(List<ILvalue> lhss, List<Type> lhsTypes, out List<TargetWriter> wRhss, List<Type> rhsTypes, TargetWriter wr) {
-      Contract.Assert(lhss.Count == lhsTypes.Count);
-      Contract.Assert(lhsTypes.Count == rhsTypes.Count);
-      wRhss = new List<TargetWriter>();
-      var rhsVars = new List<string>();
-      foreach (var lhsType in lhsTypes) {
-        string target = idGenerator.FreshId("_rhs");
-        rhsVars.Add(target);
-        wr.Write(GenerateLhsDecl(target, lhsType, wr, null));
-        wr.Write(" = ");
-        wRhss.Add(wr.Fork());
-        EndStmt(wr);
-      }
-
-      Contract.Assert(rhsVars.Count == lhsTypes.Count);
-      for (int i = 0; i < rhsVars.Count; i++) {
-        TargetWriter wRhsVar = EmitAssignment(lhss[i], lhsTypes[i], rhsTypes[i], wr);
-        wRhsVar.Write(rhsVars[i]);
-      }
-    }
-
     protected virtual void EmitSetterParameter(TargetWriter wr) {
       wr.Write("value");
     }
@@ -622,6 +601,8 @@ namespace Microsoft.Dafny {
 
     public void Compile(Program program, TargetWriter wrx) {
       Contract.Requires(program != null);
+
+      PreCompiler.PreCompile(program, idGenerator);
 
       EmitHeader(program, wrx);
       EmitBuiltInDecls(program.BuiltIns, wrx);
@@ -1791,44 +1772,8 @@ namespace Microsoft.Dafny {
       } else if (stmt is UpdateStmt) {
         var s = (UpdateStmt)stmt;
         var resolved = s.ResolvedStatements;
-        if (resolved.Count == 1) {
-          TrStmt(resolved[0], wr);
-        } else {
-          // multi-assignment
-          Contract.Assert(s.Lhss.Count == resolved.Count);
-          Contract.Assert(s.Rhss.Count == resolved.Count);
-          var lhsTypes = new List<Type>();
-          var rhsTypes = new List<Type>();
-          var lhss = new List<Expression>();
-          var rhss = new List<AssignmentRhs>();
-          for (int i = 0; i < resolved.Count; i++) {
-            if (!resolved[i].IsGhost) {
-              var lhs = s.Lhss[i];
-              var rhs = s.Rhss[i];
-              if (rhs is HavocRhs) {
-                if (DafnyOptions.O.ForbidNondeterminism) {
-                  Error(rhs.Tok, "nondeterministic assignment forbidden by /definiteAssignment:3 option", wr);
-                }
-              } else {
-                lhss.Add(lhs);
-                lhsTypes.Add(lhs.Type);
-                rhss.Add(rhs);
-                rhsTypes.Add(TypeOfRhs(rhs));
-              }
-            }
-          }
-
-          var wStmts = wr.ForkSection();
-          var lvalues = new List<ILvalue>();
-          foreach (Expression lhs in lhss) {
-            lvalues.Add(CreateLvalue(lhs, wStmts));
-          }
-          List<TargetWriter> wRhss;
-          EmitMultiAssignment(lvalues, lhsTypes, out wRhss, rhsTypes, wr);
-          for (int i = 0; i < wRhss.Count; i++) {
-            TrRhs(rhss[i], wRhss[i], wStmts);
-          }
-        }
+        Contract.Assert(resolved.Count == 1); // the precompiler should have taken care of this
+        TrStmt(resolved[0], wr);
       } else if (stmt is AssignStmt) {
         var s = (AssignStmt)stmt;
         Contract.Assert(!(s.Lhs is SeqSelectExpr) || ((SeqSelectExpr)s.Lhs).SelectOne);  // multi-element array assignments are not allowed

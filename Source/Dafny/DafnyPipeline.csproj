@@ -168,6 +168,7 @@
     <Compile Include="DafnyAst.cs" />
     <Compile Include="DafnyMain.cs" />
     <Compile Include="DafnyOptions.cs" />
+    <Compile Include="PreCompiler.cs" />
     <Compile Include="Printer.cs" />
     <Compile Include="RefinementTransformer.cs" />
     <Compile Include="Resolver.cs" />

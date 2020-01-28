@@ -13635,12 +13635,8 @@ namespace Microsoft.Dafny {
         Args = args;
         TyArgs = tyArgs;
       }
-      public override IEnumerable<Expression> SubExpressions {
-        get {
-          foreach (var v in Args) {
-            yield return v;
-          }
-        }
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(Args);
       }
     }
 
