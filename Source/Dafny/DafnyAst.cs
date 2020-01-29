@@ -6601,11 +6601,12 @@ namespace Microsoft.Dafny {
     }
 
     public override void TransformSubStatements(Transformer<Statement> xform) {
-      // FIXME Not sure what to do here, since a transform might easily want to
-      // turn an update statement into a block.  Fortunately, the assignment
-      // sequentializer only messes with update statements with multiple LHSes,
-      // which this one won't have.
-      Update = (ConcreteUpdateStatement) xform.Transform(Update);
+      if (Update != null) {
+        // FIXME Unfortunately, this means that a transform MUST return a
+        // ConcreteUpdateStatement if given a ConcreteUpdateStatement unless it's
+        // careful when translating a VarDeclStatement.
+        Update = (ConcreteUpdateStatement) xform.Transform(Update);
+      }
     }
 
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -6986,6 +6987,10 @@ namespace Microsoft.Dafny {
 
   public class BlockStmt : Statement {
     public readonly List<Statement> Body;
+    /// Whether the block acts as a lexical scope for variables declared within
+    /// it.  If false, the block will not be rendered as an actual block when
+    /// compiled so that variables declared will be visible outside the block.
+    public bool Scoped = true;
     public BlockStmt(IToken tok, IToken endTok, [Captured] List<Statement> body)
       : base(tok, endTok) {
       Contract.Requires(tok != null);

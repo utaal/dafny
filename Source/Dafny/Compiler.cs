@@ -1819,9 +1819,23 @@ namespace Microsoft.Dafny {
         var s = (CallStmt)stmt;
         TrCallStmt(s, null, wr);
 
-      } else if (stmt is BlockStmt) {
-        var w = wr.NewBlock("", null, BlockTargetWriter.BraceStyle.Nothing, BlockTargetWriter.BraceStyle.Newline);
-        TrStmtList(((BlockStmt)stmt).Body, w);
+      } else if (stmt is BlockStmt block) {
+        TargetWriter w;
+        if (block.Scoped) {
+          w = wr.NewBlock("", null, BlockTargetWriter.BraceStyle.Nothing, BlockTargetWriter.BraceStyle.Newline);
+        } else {
+          // Make a fake "block" using comments; this should make it easier to
+          // compare code before and after a transformation when one statement
+          // is replaced by many
+          w = wr.Fork();
+          // TODO There should be an EmitComment(), but right now all backends
+          // happen to use C comment syntax
+          wr.WriteLine("// {");
+          w = new TargetWriter(wr.IndentLevel + TargetWriter.IndentAmount);
+          wr.Append(w);
+          wr.WriteLine("// }");
+        }
+        TrStmtList(block.Body, w);
 
       } else if (stmt is IfStmt) {
         IfStmt s = (IfStmt)stmt;

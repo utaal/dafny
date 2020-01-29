@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.Linq;
@@ -28,7 +29,9 @@ namespace Microsoft.Dafny {
       foreach (var module in prog.CompileModules) {
         foreach (var decl in module.TopLevelDecls.OfType<TopLevelDeclWithMembers>()) {
           foreach (var method in decl.Members.OfType<Method>()) {
-            SequentializeAssignments(method.Body);
+            if (method.Body != null) {
+              SequentializeAssignments(method.Body);
+            }
           }
         }
       }
@@ -45,10 +48,40 @@ namespace Microsoft.Dafny {
     }
 
     Statement Sequentialize(Statement stmt) {
-      if (!(stmt is UpdateStmt update) || update.Lhss.Count == 1) {
-        SequentializeAssignments(stmt);
-        return stmt;
-      } else {
+      if (stmt is VarDeclStmt varDecl) {
+        // A VarDeclStmt can contain an UpdateStmt, which is troublesome because
+        // it can only be replaced by another UpdateStmt, and our usual
+        // replacement procedure replaces an UpdateStmt with a BlockStmt.
+        // Fortunately, the particular update statement that a VarDeclStmt
+        // contains only ever updates distinct, fresh variables, so it's always
+        // safe to sequentialize naively.
+        if (varDecl.Update is UpdateStmt update && update.ResolvedStatements.Count != 1) {
+          Contract.Assert(varDecl.Locals.Count == update.ResolvedStatements.Count);
+          var stmts = new List<Statement>();
+          for (var i = 0; i < varDecl.Locals.Count; i++) {
+            var local = varDecl.Locals[i];
+            var resolved = update.ResolvedStatements[i];
+            stmts.Add(new VarDeclStmt(Token.NoToken, Token.NoToken, new List<LocalVariable>() { local }, update: null));
+            stmts.Add(resolved);
+          }
+          return new BlockStmt(varDecl.Tok, varDecl.EndTok, stmts) {
+            // This "block" is just a convenient way to return a bunch of
+            // statements in something of type Statement; make sure it doesn't
+            // get rendered as an actual block, since then the variable
+            // declarations won't be visible outside it
+            Scoped = false
+          };
+        } else {
+          return stmt;
+        }
+      } else if (stmt is ProduceStmt prod && prod.hiddenUpdate != null) {
+        // Sequentializing the hidden update statement might produce a block statement, so separate
+        // out the update from the return/yield
+        var update = Sequentialize(prod.hiddenUpdate);
+        prod.hiddenUpdate = null;
+        prod.rhss = null;
+        return new BlockStmt(Token.NoToken, Token.NoToken, new List<Statement>() { update, prod });
+      } else if (stmt is UpdateStmt update && update.ResolvedStatements.Count != 1) {
         Contract.Assert(update.Lhss.Count == update.Rhss.Count);
         var rhsDecls = new List<Statement>();
         var lhsDecls = new List<Statement>();
@@ -70,6 +103,9 @@ namespace Microsoft.Dafny {
         }
 
         return new BlockStmt(stmt.Tok, stmt.EndTok, Util.Concat(rhsDecls, lhsDecls, assigns));
+      } else {
+        SequentializeAssignments(stmt);
+        return stmt;
       }
     }
 

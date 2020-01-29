@@ -191,7 +191,7 @@ namespace Microsoft.Dafny {
         PrintCallGraph(defaultModule, 0);
         PrintTopLevelDecls(defaultModule.TopLevelDecls, 0, null, fullPath);
         foreach (var module in prog.CompileModules) {
-          if (module.IsDefaultModule) {
+          if (module.IsDefaultModule || module.Name == "_System") {
             continue;
           }
           PrintModuleDefinition(module, scope: null, indent: 0, module.PrefixIds, fullPath);
@@ -1236,16 +1236,16 @@ namespace Microsoft.Dafny {
         Indent(indent);
         wr.Write("}");
 
-      } else if (stmt is BlockStmt) {
-        wr.WriteLine("{");
+      } else if (stmt is BlockStmt block) {
+        wr.WriteLine(block.Scoped ? "{" : "// {");
         int ind = indent + IndentAmount;
-        foreach (Statement s in ((BlockStmt)stmt).Body) {
+        foreach (Statement s in block.Body) {
           Indent(ind);
           PrintStatement(s, ind);
           wr.WriteLine();
         }
         Indent(indent);
-        wr.Write("}");
+        wr.Write(block.Scoped ? "}" : "// }");
 
       } else if (stmt is IfStmt) {
         IfStmt s = (IfStmt)stmt;
