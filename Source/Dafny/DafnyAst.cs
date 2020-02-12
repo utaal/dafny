@@ -4321,9 +4321,41 @@ namespace Microsoft.Dafny {
     /// Returns the non-null expressions of this declaration proper (that is, do not include the expressions of substatements).
     /// Does not include the generated class members.
     /// </summary>
-    public IEnumerable<Expression> SubExpressions {
+    public virtual IEnumerable<Expression> SubExpressions {
       get {
-        return Lister<Expression>.List(TransformSubExpressions);
+        foreach (var e in Attributes.SubExpressions(Attributes)) {
+          yield return e;
+        }
+        foreach (var e in Attributes.SubExpressions(Reads.Attributes)) {
+          yield return e;
+        }
+        foreach (var e in Reads.Expressions) {
+          yield return e.E;
+        }
+        foreach (var e in Attributes.SubExpressions(Modifies.Attributes)) {
+          yield return e;
+        }
+        foreach (var e in Modifies.Expressions) {
+          yield return e.E;
+        }
+        foreach (var e in Attributes.SubExpressions(Decreases.Attributes)) {
+          yield return e;
+        }
+        foreach (var e in Decreases.Expressions) {
+          yield return e;
+        }
+        foreach (var e in Requires) {
+          yield return e.E;
+        }
+        foreach (var e in Ensures) {
+          yield return e.E;
+        }
+        foreach (var e in YieldRequires) {
+          yield return e.E;
+        }
+        foreach (var e in YieldEnsures) {
+          yield return e.E;
+        }
       }
     }
 
@@ -4483,9 +4515,9 @@ namespace Microsoft.Dafny {
         return EnclosingClass.FullCompileName + "." + Declaration.IdProtect(CompileName);
       }
     }
-    public IEnumerable<Expression> SubExpressions {
+    public virtual IEnumerable<Expression> SubExpressions {
       get {
-        return Lister<Expression>.List(TransformSubExpressions);
+        yield break;
       }
     }
 
@@ -5414,6 +5446,26 @@ namespace Microsoft.Dafny {
       get { return containsQuantifier;  }
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in Req) {
+          yield return e.E;
+        }
+        foreach (var e in Reads) {
+          yield return e.E;
+        }
+        foreach (var e in Ens) {
+          yield return e.E;
+        }
+        foreach (var e in Decreases.Expressions) {
+          yield return e;
+        }
+        if (Body != null) {
+          yield return Body;
+        }
+      }
+    }
+
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       foreach (var e in Req) {
         xform.Transform(ref e.E);
@@ -5729,6 +5781,23 @@ namespace Microsoft.Dafny {
     public readonly ISet<IVariable> AssignedAssumptionVariables = new HashSet<IVariable>();
     public Method OverriddenMethod;
     private static BlockStmt emptyBody = new BlockStmt(Token.NoToken, Token.NoToken, new List<Statement>());
+
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in Req) {
+          yield return e.E;
+        }
+        foreach (var e in Mod.Expressions) {
+          yield return e.E;
+        }
+        foreach (var e in Ens) {
+          yield return e.E;
+        }
+        foreach (var e in Decreases.Expressions) {
+          yield return e;
+        }
+      }
+    }
 
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       foreach (var e in Req) {
@@ -6061,6 +6130,8 @@ namespace Microsoft.Dafny {
 
   public abstract class Statement : IAttributeBearingDeclaration
   {
+    public override string ToString() => Printer.StatementToString(this);
+
     public readonly IToken Tok;
     public readonly IToken EndTok;  // typically a terminating semi-colon or end-curly-brace
     public LList<Label> Labels;  // mutable during resolution
@@ -6100,10 +6171,8 @@ namespace Microsoft.Dafny {
     /// <summary>
     /// Returns the non-null substatements of the Statements.
     /// </summary>
-    public IEnumerable<Statement> SubStatements {
-      get {
-        return Lister<Statement>.List(TransformSubStatements);
-      }
+    public virtual IEnumerable<Statement> SubStatements {
+      get { yield break; }
     }
 
     public virtual void TransformSubStatements(Transformer<Statement> xform) {
@@ -6113,14 +6182,26 @@ namespace Microsoft.Dafny {
     /// <summary>
     /// Returns the non-null expressions of this statement proper (that is, do not include the expressions of substatements).
     /// </summary>
-    public IEnumerable<Expression> SubExpressions {
+    public virtual IEnumerable<Expression> SubExpressions {
       get {
-        return Lister<Expression>.List(TransformSubExpressions);
+        foreach (var e in Attributes.SubExpressions(Attributes)) {
+          yield return e;
+        }
       }
     }
 
     public virtual void TransformSubExpressions(Transformer<Expression> xform) {
       Attributes.TransformSubExpressions(Attributes, xform);
+    }
+
+    public void TransformDeepSubExpressions(Transformer<Expression> xform) {
+      TransformSubExpressions(xform);
+
+      TransformSubStatements(Transformer<Statement>.CreateRecursive((self, stmt) => {
+        stmt.TransformSubExpressions(xform);
+        stmt.TransformSubStatements(self);
+        return stmt;
+      }));
     }
   }
 
@@ -6203,6 +6284,12 @@ namespace Microsoft.Dafny {
       Contract.Requires(expr != null);
       this.Expr = expr;
     }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        yield return Expr;
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       base.TransformSubExpressions(xform);
       xform.Transform(ref Expr);
@@ -6219,6 +6306,13 @@ namespace Microsoft.Dafny {
       Contract.Requires(expr != null);
       Proof = proof;
       Label = label;
+    }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        if (Proof != null) {
+          yield return Proof;
+        }
+      }
     }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       if (Proof != null) {
@@ -6257,7 +6351,14 @@ namespace Microsoft.Dafny {
 
       Args = args;
     }
-    public override void TransformSubExpressions(Transformer<Expression> xform) {
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var arg in Args) {
+          yield return arg;
+        }
+      }
+    }public override void TransformSubExpressions(Transformer<Expression> xform) {
       base.TransformSubExpressions(xform);
       xform.Transform(Args);
     }
@@ -6269,6 +6370,9 @@ namespace Microsoft.Dafny {
     public readonly List<AssertLabel> LabeledAsserts = new List<AssertLabel>();  // contents filled in during resolution to indicate that "Expr" denotes a labeled assertion
     public List<Statement> ResolvedStatements = new List<Statement>(); // contents filled in during resolution
 
+    public override IEnumerable<Statement> SubStatements {
+      get { return ResolvedStatements; }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       xform.Transform(ResolvedStatements);
     }
@@ -6333,11 +6437,38 @@ namespace Microsoft.Dafny {
       this.rhss = rhss;
       hiddenUpdate = null;
     }
-      public override void TransformSubExpressions(Transformer<Expression> xform) {
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        if (rhss != null) {
+          foreach (var rhs in rhss) {
+            foreach (var ee in rhs.SubExpressions) {
+              yield return ee;
+            }
+          }
+        }
+      }
+    }
+    public override void TransformSubExpressions(Transformer<Expression> xform) {
       base.TransformSubExpressions(xform);
       if (rhss != null) {
         foreach (var rhs in rhss) {
           rhs.TransformSubExpressions(xform);
+        }
+        // Note that we leave out the hiddenUpdate field; it's a pain to handle
+        // because it's restricted to being an UpdateStmt.  The pre-compiler
+        // deals with this by turning each ProduceStmt with RHSes into a block
+        // with an assignment followed by a simple return.
+      }
+    }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        if (rhss != null) {
+          foreach (var rhs in rhss) {
+            foreach (var s in rhs.SubStatements) {
+              yield return s;
+            }
+          }
         }
       }
     }
@@ -6400,25 +6531,22 @@ namespace Microsoft.Dafny {
     /// <summary>
     /// Returns the non-null subexpressions of the AssignmentRhs.
     /// </summary>
-    public IEnumerable<Expression> SubExpressions {
+    public virtual IEnumerable<Expression> SubExpressions {
       get {
-        return Lister<Expression>.List(TransformSubExpressions);
+        foreach (var e in Attributes.SubExpressions(Attributes)) {
+          yield return e;
+        }
       }
     }
-
     public virtual void TransformSubExpressions(Transformer<Expression> xform) {
       Attributes.TransformSubExpressions(Attributes, xform);
     }
-
     /// <summary>
     /// Returns the non-null sub-statements of the AssignmentRhs.
     /// </summary>
-    public IEnumerable<Statement> SubStatements{
-      get {
-        return Lister<Statement>.List(TransformSubStatements);
-      }
+    public virtual IEnumerable<Statement> SubStatements{
+      get { yield break; }
     }
-
     public virtual void TransformSubStatements(Transformer<Statement> xform) {
       // do nothing by default
     }
@@ -6439,6 +6567,11 @@ namespace Microsoft.Dafny {
       Expr = expr;
     }
     public override bool CanAffectPreviouslyKnownExpressions { get { return false; } }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Expr;
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref Expr);
     }
@@ -6552,6 +6685,23 @@ namespace Microsoft.Dafny {
       }
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        if (ArrayDimensions != null) {
+          foreach (var e in ArrayDimensions) {
+            yield return e;
+          }
+          if (ElementInit != null) {
+            yield return ElementInit;
+          }
+          if (InitDisplay != null) {
+            foreach (var e in InitDisplay) {
+              yield return e;
+            }
+          }
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       if (ArrayDimensions != null) {
         xform.Transform(ArrayDimensions);
@@ -6560,6 +6710,13 @@ namespace Microsoft.Dafny {
         }
         if (InitDisplay != null) {
           xform.Transform(InitDisplay);
+        }
+      }
+    }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        if (InitCall != null) {
+          yield return InitCall;
         }
       }
     }
@@ -6600,12 +6757,27 @@ namespace Microsoft.Dafny {
       Update = update;
     }
 
+    public override IEnumerable<Statement> SubStatements {
+      get { if (Update != null) { yield return Update; } }
+    }
+
     public override void TransformSubStatements(Transformer<Statement> xform) {
       if (Update != null) {
         // FIXME Unfortunately, this means that a transform MUST return a
         // ConcreteUpdateStatement if given a ConcreteUpdateStatement unless it's
         // careful when translating a VarDeclStatement.
         Update = (ConcreteUpdateStatement) xform.Transform(Update);
+      }
+    }
+
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var v in Locals) {
+          foreach (var e in Attributes.SubExpressions(v.Attributes)) {
+            yield return e;
+          }
+        }
       }
     }
 
@@ -6626,6 +6798,15 @@ namespace Microsoft.Dafny {
       : base(tok, endTok) {
       LHS = lhs;
       RHS = rhs;
+    }
+
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in Attributes.SubExpressions(Attributes)) {
+          yield return e;
+        }
+        yield return RHS;
+      }
     }
 
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -6654,6 +6835,12 @@ namespace Microsoft.Dafny {
       Contract.Requires(endTok != null);
       Contract.Requires(cce.NonNullElements(lhss));
       Lhss = lhss;
+    }
+    public override void TransformSubExpressions(Transformer<Expression> xform) {
+      base.TransformSubExpressions(xform);
+      // These don't always count as LHSes (XXX why?), but we always need to
+      // transform them (say, for variable substitution)
+      xform.Transform(Lhss);
     }
   }
 
@@ -6688,6 +6875,15 @@ namespace Microsoft.Dafny {
         AssumeToken = assumeToken;
       }
     }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        yield return Expr;
+        foreach (var lhs in Lhss) {
+          yield return lhs;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       base.TransformSubExpressions(xform);
       xform.Transform(ref Expr);
@@ -6701,8 +6897,27 @@ namespace Microsoft.Dafny {
     public readonly bool CanMutateKnownState;
 
     public readonly List<Statement> ResolvedStatements = new List<Statement>();  // contents filled in during resolution
+    public override IEnumerable<Statement> SubStatements {
+      get { return ResolvedStatements; }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       xform.Transform(ResolvedStatements);
+
+      // We include the RHSes here (even though they're not in SubStatements)
+      // since we need to be able to update both this and the resolved
+      // statements (since both are used by the compiler)
+      foreach (var rhs in Rhss) {
+        rhs.TransformSubStatements(xform);
+      }
+    }
+
+    public override void TransformSubExpressions(Transformer<Expression> xform) {
+      base.TransformSubExpressions(xform);
+
+      // See note on TransformSubStatements
+      foreach (var rhs in Rhss) {
+        rhs.TransformSubExpressions(xform);
+      }
     }
 
     [ContractInvariantMethod]
@@ -6738,6 +6953,9 @@ namespace Microsoft.Dafny {
   {
     public readonly Expression Rhs; // this is the unresolved RHS, and thus can also be a method call
     public readonly List<Statement> ResolvedStatements = new List<Statement>();  // contents filled in during resolution
+    public override IEnumerable<Statement> SubStatements {
+      get { return ResolvedStatements; }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       xform.Transform(ResolvedStatements);
     }
@@ -6785,6 +7003,23 @@ namespace Microsoft.Dafny {
 
     public override void TransformSubStatements(Transformer<Statement> xform) {
       Rhs.TransformSubStatements(xform);
+    }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        foreach (var s in Rhs.SubStatements) {
+          yield return s;
+        }
+      }
+    }
+
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        yield return Lhs;
+        foreach (var ee in Rhs.SubExpressions) {
+          yield return ee;
+        }
+      }
     }
 
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -6977,6 +7212,18 @@ namespace Microsoft.Dafny {
       this.Args = args;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var ee in Lhs) {
+          yield return ee;
+        }
+        yield return MethodSelect;
+        foreach (var ee in Args) {
+          yield return ee;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       base.TransformSubExpressions(xform);
       xform.Transform(Lhs);
@@ -7007,6 +7254,10 @@ namespace Microsoft.Dafny {
       } else {
         return new BlockStmt(stmt.Tok, stmt.EndTok, new List<Statement>() { stmt });
       }
+    }
+
+    public override IEnumerable<Statement> SubStatements {
+      get { return Body; }
     }
 
     public override void TransformSubStatements(Transformer<Statement> xform) {
@@ -7041,6 +7292,9 @@ namespace Microsoft.Dafny {
     public override void TransformSubStatements(Transformer<Statement> xform) {
       xform.Transform(BodyInit);
       xform.Transform(BodyProper);
+      Body.Clear();
+      Body.AddRange(BodyInit);
+      Body.AddRange(BodyProper);
     }
   }
 
@@ -7067,10 +7321,26 @@ namespace Microsoft.Dafny {
       this.Thn = thn;
       this.Els = els;
     }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        yield return Thn;
+        if (Els != null) {
+          yield return Els;
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       Thn = BlockStmt.Wrap(xform.Transform(Thn));
       if (Els != null) {
         xform.Transform(ref Els);
+      }
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        if (Guard != null) {
+          yield return Guard;
+        }
       }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -7123,9 +7393,26 @@ namespace Microsoft.Dafny {
       this.Alternatives = alternatives;
       this.UsesOptionalBraces = usesOptionalBraces;
     }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        foreach (var alt in Alternatives) {
+          foreach (var s in alt.Body) {
+            yield return s;
+          }
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       foreach (var alt in Alternatives) {
         xform.Transform(alt.Body);
+      }
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var alt in Alternatives) {
+          yield return alt.Guard;
+        }
       }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -7165,6 +7452,27 @@ namespace Microsoft.Dafny {
           new List<Expression>() { new WildcardExpr(tok) }, null);
       }
     }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var mfe in Invariants) {
+          foreach (var e in Attributes.SubExpressions(mfe.Attributes)) { yield return e; }
+          yield return mfe.E;
+        }
+        foreach (var e in Attributes.SubExpressions(Decreases.Attributes)) { yield return e; }
+        if (Decreases.Expressions != null) {
+          foreach (var e in Decreases.Expressions) {
+            yield return e;
+          }
+        }
+        foreach (var e in Attributes.SubExpressions(Mod.Attributes)) { yield return e; }
+        if (Mod.Expressions != null) {
+          foreach (var fe in Mod.Expressions) {
+            yield return fe.E;
+          }
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       base.TransformSubExpressions(xform);
       foreach (var mfe in Invariants) {
@@ -7199,9 +7507,24 @@ namespace Microsoft.Dafny {
       this.Body = body;
     }
 
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        if (Body != null) {
+          yield return Body;
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       if (Body != null) {
         Body = BlockStmt.Wrap(xform.Transform(Body));
+      }
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        if (Guard != null) {
+          yield return Guard;
+        }
       }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -7246,12 +7569,28 @@ namespace Microsoft.Dafny {
       this.Alternatives = alternatives;
       this.UsesOptionalBraces = usesOptionalBraces;
     }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        foreach (var alt in Alternatives) {
+          foreach (var s in alt.Body) {
+            yield return s;
+          }
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       foreach (var alt in Alternatives) {
         xform.Transform(alt.Body);
       }
     }
-    public override void TransformSubExpressions(Transformer<Expression> xform) {
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var alt in Alternatives) {
+          yield return alt.Guard;
+        }
+      }
+    }public override void TransformSubExpressions(Transformer<Expression> xform) {
       base.TransformSubExpressions(xform);
       foreach (var alt in Alternatives) {
         xform.Transform(ref alt.Guard);
@@ -7338,9 +7677,26 @@ namespace Microsoft.Dafny {
       }
     }
 
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        if (Body != null) {
+          yield return Body;
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       if (Body != null) {
         xform.Transform(ref Body);
+      }
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        yield return Range;
+        foreach (var ee in Ens) {
+          foreach (var e in Attributes.SubExpressions(ee.Attributes)) { yield return e; }
+          yield return ee.E;
+        }
       }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -7374,9 +7730,25 @@ namespace Microsoft.Dafny {
       Body = body;
     }
 
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        if (Body != null) {
+          yield return Body;
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       if (Body != null) {
         Body = BlockStmt.Wrap(xform.Transform(Body));
+      }
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var e in Attributes.SubExpressions(Mod.Attributes)) { yield return e; }
+        foreach (var fe in Mod.Expressions) {
+          yield return fe.E;
+        }
       }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -7582,10 +7954,35 @@ namespace Microsoft.Dafny {
       this.Attributes = attrs;
     }
 
+    public override IEnumerable<Statement> SubStatements
+    {
+      get {
+        foreach (var h in Hints) {
+          yield return h;
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform)
     {
       for (var i = 0; i < Hints.Count; i++) {
         Hints[i] = BlockStmt.Wrap(xform.Transform(Hints[i]));
+      }
+    }
+    public override IEnumerable<Expression> SubExpressions
+    {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        foreach (var e in Attributes.SubExpressions(Attributes)) { yield return e; }
+
+        for (int i = 0; i < Lines.Count - 1; i++) {  // note, we skip the duplicated line at the end
+          yield return Lines[i];
+        }
+        foreach (var calcop in AllCalcOps) {
+          var o3 = calcop as TernaryCalcOp;
+          if (o3 != null) {
+            yield return o3.Index;
+          }
+        }
       }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform)
@@ -7687,9 +8084,24 @@ namespace Microsoft.Dafny {
       this.cases = cases;
     }
 
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        foreach (var kase in cases) {
+          foreach (var s in kase.Body) {
+            yield return s;
+          }
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
       foreach (var kase in cases) {
         xform.Transform(kase.Body);
+      }
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in base.SubExpressions) { yield return e; }
+        yield return Source;
       }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -7758,7 +8170,7 @@ namespace Microsoft.Dafny {
   /// </summary>
   public class SkeletonStatement : Statement
   {
-    public readonly Statement S;
+    public Statement S;
     public bool ConditionOmitted { get { return ConditionEllipsis != null; } }
     public readonly IToken ConditionEllipsis;
     public bool BodyOmitted { get { return BodyEllipsis != null; } }
@@ -7788,13 +8200,23 @@ namespace Microsoft.Dafny {
       ExprReplacements = exprReplacements;
 
     }
+    public override IEnumerable<Statement> SubStatements {
+      get {
+        // The SkeletonStatement is really a modification of its inner statement S.  Therefore,
+        // we don't consider S to be a substatement.  Instead, the substatements of S are the
+        // substatements of the SkeletonStatement.  In the case the SkeletonStatement modifies
+        // S by omitting its body (which is true only for loops), there are no substatements.
+        if (!BodyOmitted) {
+          foreach (var s in S.SubStatements) {
+            yield return s;
+          }
+        }
+      }
+    }
     public override void TransformSubStatements(Transformer<Statement> xform) {
-      // The SkeletonStatement is really a modification of its inner statement S.  Therefore,
-      // we don't consider S to be a substatement.  Instead, the substatements of S are the
-      // substatements of the SkeletonStatement.  In the case the SkeletonStatement modifies
-      // S by omitting its body (which is true only for loops), there are no substatements.
       if (!BodyOmitted) {
-        S.TransformSubStatements(xform);
+        // Transformers may wish to modify S itself, so in this sense S *is* a substatement.
+        xform.Transform(ref S);
       }
     }
   }
@@ -7875,6 +8297,8 @@ namespace Microsoft.Dafny {
   [DebuggerDisplay("{Printer.ExprToString(this)}")]
   public abstract class Expression
   {
+    public override string ToString() => Printer.ExprToString(this);
+
     public readonly IToken tok;
     [ContractInvariantMethod]
     void ObjectInvariant() {
@@ -7951,10 +8375,8 @@ namespace Microsoft.Dafny {
     /// means, for example, that any concrete syntax that resolves to some other expression will return the subexpressions
     /// of the resolved expression.
     /// </summary>
-    public IEnumerable<Expression> SubExpressions {
-      get {
-        return Lister<Expression>.List(TransformSubExpressions);
-      }
+    public virtual IEnumerable<Expression> SubExpressions {
+      get { yield break; }
     }
 
     public virtual void TransformSubExpressions(Transformer<Expression> xform) {
@@ -8616,6 +9038,24 @@ namespace Microsoft.Dafny {
       this.Arguments = arguments;
     }
 
+    /// Construct a resolved datatype value
+    public DatatypeValue(IToken tok, DatatypeCtor ctor, [Captured] List<Type> typeArguments, [Captured] List<Expression> arguments, bool isCoCall)
+      : base(tok) {
+      Contract.Requires(cce.NonNullElements(typeArguments));
+      Contract.Requires(cce.NonNullElements(arguments));
+      Contract.Requires(ctor != null);
+      this.DatatypeName = ctor.EnclosingDatatype.FullName;
+      this.MemberName = ctor.Name;
+      this.Arguments = arguments;
+      this.Ctor = ctor;
+      this.InferredTypeArgs = typeArguments;
+      this.IsCoCall = isCoCall;
+    }
+
+    public override IEnumerable<Expression> SubExpressions {
+      get { return Arguments; }
+    }
+
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(Arguments);
     }
@@ -8803,6 +9243,10 @@ namespace Microsoft.Dafny {
       Elements = elements;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get { return Elements; }
+    }
+
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(Elements);
     }
@@ -8834,6 +9278,14 @@ namespace Microsoft.Dafny {
       Contract.Requires(cce.NonNullElements(elements));
       Finite = finite;
       Elements = elements;
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var ep in Elements) {
+          yield return ep.A;
+          yield return ep.B;
+        }
+      }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       foreach (var ep in Elements) {
@@ -8947,6 +9399,10 @@ namespace Microsoft.Dafny {
       }
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get { yield return Obj; }
+    }
+
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref Obj);
     }
@@ -8975,6 +9431,13 @@ namespace Microsoft.Dafny {
       E1 = e1;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Seq;
+        if (E0 != null) yield return E0;
+        if (E1 != null) yield return E1;
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref Seq);
       if (E0 != null) xform.Transform(ref E0);
@@ -9002,6 +9465,14 @@ namespace Microsoft.Dafny {
       Indices = indices;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Array;
+        foreach (var e in Indices) {
+          yield return e;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(Array);
       xform.Transform(Indices);
@@ -9040,6 +9511,23 @@ namespace Microsoft.Dafny {
       Value = val;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        if (ResolvedUpdateExpr == null)
+        {
+          yield return Seq;
+          yield return Index;
+          yield return Value;
+        }
+        else
+        {
+          foreach (var e in ResolvedUpdateExpr.SubExpressions)
+          {
+            yield return e;
+          }
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       if (ResolvedUpdateExpr == null)
       {
@@ -9061,6 +9549,14 @@ namespace Microsoft.Dafny {
     public Expression Function;
     public readonly List<Expression> Args;
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Function;
+        foreach (var e in Args) {
+          yield return e;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref Function);
       xform.Transform(Args);
@@ -9079,6 +9575,13 @@ namespace Microsoft.Dafny {
     public readonly Expression Expr;
     public Expression ResolvedExpression;
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        if (ResolvedExpression != null) {
+          yield return ResolvedExpression;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       if (ResolvedExpression != null) {
         xform.Transform(ResolvedExpression);
@@ -9145,6 +9648,14 @@ namespace Microsoft.Dafny {
       this.Args = args;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Receiver;
+        foreach (var e in Args) {
+          yield return e;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref Receiver);
       xform.Transform(Args);
@@ -9164,6 +9675,12 @@ namespace Microsoft.Dafny {
       ExplicitElementType = elementType;
       N = length;
       Initializer = initializer;
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return N;
+        yield return Initializer;
+      }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(N);
@@ -9189,6 +9706,9 @@ namespace Microsoft.Dafny {
       E = expr;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get { yield return E; }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref E);
     }
@@ -9215,6 +9735,9 @@ namespace Microsoft.Dafny {
       At = at;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get { yield return E; }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref E);
     }
@@ -9238,6 +9761,13 @@ namespace Microsoft.Dafny {
       this.At = at;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var fe in Frame) {
+          yield return fe.E;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       foreach (var fe in Frame) {
         xform.Transform(ref fe.E);
@@ -9260,6 +9790,9 @@ namespace Microsoft.Dafny {
       this.E = e;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get { yield return E; }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref E);
     }
@@ -9616,6 +10149,12 @@ namespace Microsoft.Dafny {
       Type = Type.Bool;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return E0;
+        yield return E1;
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref E0);
       xform.Transform(ref E1);
@@ -9642,6 +10181,13 @@ namespace Microsoft.Dafny {
       E2 = e2;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return E0;
+        yield return E1;
+        yield return E2;
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref E0);
       xform.Transform(ref E1);
@@ -9681,6 +10227,17 @@ namespace Microsoft.Dafny {
       Body = body;
       Exact = exact;
       Attributes = attrs;
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in Attributes.SubExpressions(Attributes)) {
+          yield return e;
+        }
+        foreach (var rhs in RHSs) {
+          yield return rhs;
+        }
+        yield return Body;
+      }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       Attributes.TransformSubExpressions(Attributes, xform);
@@ -9731,6 +10288,12 @@ namespace Microsoft.Dafny {
       Body = body;
       Contract = contract;
       ReplacerToken = token;
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Body;
+        if (Contract != null) yield return Contract;
+      }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref Body);
@@ -9804,6 +10367,10 @@ namespace Microsoft.Dafny {
       /// </summary>
       public abstract int Preference(); // higher is better
 
+      public virtual void TransformSubExpressions(Transformer<Expression> xform) {
+        // Do nothing by default
+      }
+
       public static BoundedPool GetBest(List<BoundedPool> bounds, PoolVirtues requiredVirtues) {
         Contract.Requires(bounds != null);
         bounds = CombineIntegerBounds(bounds);
@@ -9866,13 +10433,16 @@ namespace Microsoft.Dafny {
     }
     public class ExactBoundedPool : BoundedPool
     {
-      public readonly Expression E;
+      public Expression E;
       public ExactBoundedPool(Expression e) {
         Contract.Requires(e != null);
         E = e;
       }
       public override PoolVirtues Virtues => PoolVirtues.Finite | PoolVirtues.Enumerable | PoolVirtues.IndependentOfAlloc | PoolVirtues.IndependentOfAlloc_or_ExplicitAlloc;
       public override int Preference() => 15;  // the best of all bounds
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref E);
+      }
     }
     public class BoolBoundedPool : BoundedPool
     {
@@ -9917,8 +10487,8 @@ namespace Microsoft.Dafny {
     }
     public class IntBoundedPool : BoundedPool
     {
-      public readonly Expression LowerBound;
-      public readonly Expression UpperBound;
+      public Expression LowerBound;
+      public Expression UpperBound;
       public IntBoundedPool(Expression lowerBound, Expression upperBound) {
         Contract.Requires(lowerBound != null || upperBound != null);
         LowerBound = lowerBound;
@@ -9934,6 +10504,10 @@ namespace Microsoft.Dafny {
         }
       }
       public override int Preference() => LowerBound != null && UpperBound != null ? 5 : 4;
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref UpperBound);
+        xform.Transform(ref LowerBound);
+      }
     }
     public abstract class CollectionBoundedPool : BoundedPool
     {
@@ -9959,12 +10533,15 @@ namespace Microsoft.Dafny {
     }
     public class SetBoundedPool : CollectionBoundedPool
     {
-      public readonly Expression Set;
+      public Expression Set;
       public SetBoundedPool(Expression set, bool exactTypes, bool isFiniteCollection) : base(exactTypes, isFiniteCollection) { Set = set; }
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref Set);
+      }
     }
     public class SubSetBoundedPool : BoundedPool
     {
-      public readonly Expression UpperBound;
+      public Expression UpperBound;
       public readonly bool IsFiniteCollection;
       public SubSetBoundedPool(Expression set, bool isFiniteCollection) {
         UpperBound = set;
@@ -9981,10 +10558,13 @@ namespace Microsoft.Dafny {
         }
       }
       public override int Preference() => 3;
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref UpperBound);
+      }
     }
     public class SuperSetBoundedPool : BoundedPool
     {
-      public readonly Expression LowerBound;
+      public Expression LowerBound;
       public SuperSetBoundedPool(Expression set) { LowerBound = set; }
       public override int Preference() => 2;
       public override PoolVirtues Virtues {
@@ -9996,21 +10576,33 @@ namespace Microsoft.Dafny {
           }
         }
       }
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref LowerBound);
+      }
     }
     public class MultiSetBoundedPool : CollectionBoundedPool
     {
-      public readonly Expression MultiSet;
+      public Expression MultiSet;
       public MultiSetBoundedPool(Expression multiset, bool exactTypes) : base(exactTypes, true) { MultiSet = multiset; }
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref MultiSet);
+      }
     }
     public class MapBoundedPool : CollectionBoundedPool
     {
-      public readonly Expression Map;
+      public Expression Map;
       public MapBoundedPool(Expression map, bool exactTypes, bool isFiniteCollection) : base(exactTypes, isFiniteCollection) { Map = map; }
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref Map);
+      }
     }
     public class SeqBoundedPool : CollectionBoundedPool
     {
-      public readonly Expression Seq;
+      public Expression Seq;
       public SeqBoundedPool(Expression seq, bool exactTypes) : base(exactTypes, true) { Seq = seq; }
+      public override void TransformSubExpressions(Transformer<Expression> xform) {
+        xform.Transform(ref Seq);
+      }
     }
     public class DatatypeBoundedPool : BoundedPool
     {
@@ -10048,10 +10640,22 @@ namespace Microsoft.Dafny {
       this.Attributes = attrs;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in Attributes.SubExpressions(Attributes)) {
+          yield return e;
+        }
+        if (Range != null) { yield return Range; }
+        yield return Term;
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       Attributes.TransformSubExpressions(Attributes, xform);
       if (Range != null) { xform.Transform(ref Range); }
       xform.Transform(ref term);
+      foreach (var boundedPool in Bounds) {
+        boundedPool.TransformSubExpressions(xform);
+      }
     }
   }
 
@@ -10122,6 +10726,23 @@ namespace Microsoft.Dafny {
       // Don't call this on a quantifier with a Split clause: it's not a real quantifier. The only exception is the Compiler.
       Contract.Requires(bypassSplitQuantifier || SplitQuantifier == null);
       throw new cce.UnreachableException(); // This body is just here for the "Requires" clause
+    }
+
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        if (SplitQuantifier == null) {
+          foreach (var e in base.SubExpressions) {
+            yield return e;
+          }
+        } else {
+          foreach (var e in Attributes.SubExpressions(Attributes)) {
+            yield return e;
+          }
+          foreach (var e in SplitQuantifier) {
+            yield return e;
+          }
+        }
+      }
     }
 
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -10263,6 +10884,17 @@ namespace Microsoft.Dafny {
       if (TermLeft != null) { xform.Transform(ref TermLeft); }
       xform.Transform(ref term);
     }
+
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        foreach (var e in Attributes.SubExpressions(Attributes)) {
+          yield return e;
+        }
+        if (Range != null) { yield return Range; }
+        if (TermLeft != null) { yield return TermLeft; }
+        yield return Term;
+      }
+    }
   }
 
   public class LambdaExpr : ComprehensionExpr
@@ -10283,6 +10915,17 @@ namespace Microsoft.Dafny {
       }
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Term;
+        if (Range != null) {
+          yield return Range;
+        }
+        foreach (var read in Reads) {
+          yield return read.E;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref term);
       if (Range != null) {
@@ -10327,6 +10970,13 @@ namespace Microsoft.Dafny {
       Contract.Requires(expr != null);
       S = stmt;
       E = expr;
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        // Note:  A StmtExpr is unusual in that it contains a statement.  For now, callers
+        // of SubExpressions need to be aware of this and handle it specially.
+        yield return E;
+      }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       // Note:  A StmtExpr is unusual in that it contains a statement.  For now, callers
@@ -10380,6 +11030,13 @@ namespace Microsoft.Dafny {
       this.Els = els;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Test;
+        yield return Thn;
+        yield return Els;
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref Test);
       xform.Transform(ref Thn);
@@ -10428,6 +11085,14 @@ namespace Microsoft.Dafny {
       this.cases = cases;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        yield return Source;
+        foreach (var mc in cases) {
+          yield return mc.Body;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref source);
       foreach (var mc in cases) {
@@ -10599,6 +11264,9 @@ namespace Microsoft.Dafny {
       ToType = toType;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get { yield return E; }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref E);
     }
@@ -10626,6 +11294,9 @@ namespace Microsoft.Dafny {
       ToType = toType;
     }
 
+    public override IEnumerable<Expression> SubExpressions {
+      get { yield return E; }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       xform.Transform(ref E);
     }
@@ -10728,6 +11399,13 @@ namespace Microsoft.Dafny {
     public ConcreteSyntaxExpression(IToken tok)
       : base(tok) {
     }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        if (ResolvedExpression != null) {
+          yield return ResolvedExpression;
+        }
+      }
+    }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       if (ResolvedExpression != null) {
         xform.Transform(ref ResolvedExpression);
@@ -10776,6 +11454,21 @@ namespace Microsoft.Dafny {
       Contract.Requires(updates.Count != 0);
       Root = root;
       Updates = updates;
+    }
+
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        if (ResolvedExpression == null) {
+          yield return Root;
+          foreach (var update in Updates) {
+            yield return update.Item3;
+          }
+        } else {
+          foreach (var e in ResolvedExpression.SubExpressions) {
+            yield return e;
+          }
+        }
+      }
     }
 
     public override void TransformSubExpressions(Transformer<Expression> xform) {
@@ -10833,6 +11526,18 @@ namespace Microsoft.Dafny {
       Contract.Requires(tok != null);
       Contract.Requires(e != null);
       E = e;
+    }
+    public override IEnumerable<Expression> SubExpressions {
+      get {
+        if (ResolvedExpression == null) {
+          // the expression hasn't yet been turned into a resolved expression, so use .E as the subexpression
+          yield return E;
+        } else {
+          foreach (var ee in base.SubExpressions) {
+            yield return ee;
+          }
+        }
+      }
     }
     public override void TransformSubExpressions(Transformer<Expression> xform) {
       if (ResolvedExpression == null) {
@@ -11137,20 +11842,12 @@ namespace Microsoft.Dafny {
         ts[i] = Transform(ts[i]);
       }
     }
-  }
 
-  public class Lister<T> : Transformer<T> {
-    public readonly List<T> Result = new List<T>();
-
-    public override T Transform(T t) {
-      Result.Add(t);
-      return t;
-    }
-
-    public static List<T> List(Action<Lister<T>> action) {
-      var lister = new Lister<T>();
-      action(lister);
-      return lister.Result;
+    /// Convenient way to create a transformer that refers to itself.
+    public static Transformer<T> CreateRecursive(Func<Transformer<T>, T, T> func) {
+      Transformer<T> ans = null;
+      ans = new Transformer<T>(t => func(ans, t));
+      return ans;
     }
   }
 

@@ -3,30 +3,344 @@ using System.Collections.Generic;
 using System.Diagnostics.Contracts;
 using System.Linq;
 
+using IToken = Microsoft.Boogie.IToken;
 using Token = Microsoft.Boogie.Token;
 
 namespace Microsoft.Dafny {
   class PreCompiler {
+    // TODO Make this a command-line option
+    private bool Verbose = false; // not const to avoid silly compiler warning
+
+    private readonly Program Program;
+    private readonly TargetLanguage Target;
     private readonly FreshIdGenerator IdGen;
 
-    private PreCompiler(FreshIdGenerator idGen) {
+    #region Construction and invocation
+
+    private PreCompiler(Program prog, TargetLanguage target, FreshIdGenerator idGen) {
+      this.Program = prog;
+      Target = target;
       IdGen = idGen;
 
       Sequentializer = MakeSequentalizer();
     }
 
-    public static void PreCompile(Program prog, FreshIdGenerator idGen) {
-      new PreCompiler(idGen).PreCompile(prog);
+    public static void PreCompile(Program prog, TargetLanguage target, FreshIdGenerator idGen) {
+      new PreCompiler(prog, target, idGen).Run();
     }
 
-    void PreCompile(Program prog) {
-      Main.MaybePrintProgram(prog, "-", afterResolver: true, forCompilation: true);
-      SequentializeAssignments(prog);
-      Main.MaybePrintProgram(prog, "-", afterResolver: true, forCompilation: true);
+    #endregion
+
+    #region Main pre-compiler engine
+
+    void Run() {
+      AnnouncePass("Resolver");
+
+      Preprocess();
+      AnnouncePass("Preprocessing");
+
+      if (Target.MultipleReturnStyle == TargetLanguage.MultipleReturnStyleEnum.Tuple) {
+        TupleReturns();
+        AnnouncePass("Tuple Returns");
+      }
+
+      SequentializeAssignments();
+      AnnouncePass("Sequentialize Assignments");
     }
 
-    void SequentializeAssignments(Program prog) {
-      foreach (var module in prog.CompileModules) {
+    #endregion
+
+    #region Output
+
+    void AnnouncePass(string header) {
+      if (!Verbose) {
+        return;
+      }
+
+      // TODO: More control over output, including which passes to dump and into
+      // what file or files (see GHC options for dumping core-to-core passes into
+      // different files).
+
+      var dashes = new string('-', header.Length + 4);
+
+      System.Console.WriteLine();
+      System.Console.WriteLine(dashes);
+      System.Console.WriteLine($"| {header} |");
+      System.Console.WriteLine(dashes);
+      System.Console.WriteLine();
+
+      Main.MaybePrintProgram(Program, "-", afterResolver: true, forCompilation: true);
+    }
+    #endregion
+
+    #region Passes
+
+    #region Preprocessing
+
+    /// Simplify the AST in ways that make transformations easier.  In
+    /// particular, some AST classes have fields of type UpdateStmt (namely
+    /// ProduceStmt.hiddenUpdate and VarDeclStmt.Update), and this is a pain
+    /// as we'd like to replace some UpdateStmts with BlockStmts.
+    ///
+    /// Unfortunately, not much can be done about VarDeclStmt.Update, since
+    /// `var x := 42;` and `var x : int; x := 42;` don't generate the same
+    /// code. Specifically, the latter generates two assignments to `x`, the
+    /// first giving a default value, and Java cares which variables are
+    /// assigned to exactly once (such variables are "effectively final" and
+    /// may be used from inside a lambda or local class).
+    ///
+    /// TODO?: Create an AssignmentRhs subclass that specifically *suppresses*
+    /// the assignment of a default value, allowed only when the variable won't
+    /// be read before it's next written to.  If we wrote this RHS as
+    /// `undefined`, then we could write `var x := undefined; x := 42;` which
+    /// would indeed be equivalent to `var x := 42`.
+    ///
+    /// Also adds explicit return statements to methods in which control may
+    /// fall off the end.
+    void Preprocess() {
+      foreach (Method method in AllMethods) {
+        if (method.Body == null) {
+          continue;
+        }
+
+        method.Body.TransformSubStatements(Transformer<Statement>.CreateRecursive((self, stmt) => {
+          if (stmt is ProduceStmt produce) {
+            // return x, y; ==> out1, out2 := x, y; return
+            var update = produce.hiddenUpdate;
+            if (update != null) {
+              produce.hiddenUpdate = null;
+              produce.rhss = null;
+              return new BlockStmt(NT, NT, new List<Statement>() { update, produce });
+            } else {
+              return stmt;
+            }
+          } else {
+            stmt.TransformSubStatements(self);
+            return stmt;
+          }
+        }));
+
+        // Ensure that no method ends with an implicit return
+        if (MayFallThrough(method.Body)) {
+          method.Body.AppendStmt(new ReturnStmt(NT, NT, rhss: null));
+        }
+      }
+    }
+
+    // Whether control may pass through the given statement to the next (or
+    // the end of the method)
+    static bool MayFallThrough(Statement stmt) {
+      switch (stmt) {
+        case BreakStmt _:
+        case ReturnStmt _:
+          return false;
+        case BlockStmt block:
+          return MayFallThroughAll(block.Body);
+        case IfStmt ifStmt:
+          return MayFallThrough(ifStmt.Thn) && MayFallThrough(ifStmt.Els);
+        case WhileStmt whileStmt:
+          if (whileStmt.Guard is LiteralExpr lit && lit.Value == (object) true) {
+            return MayBreak(whileStmt.Body, whileStmt);
+          } else {
+            return true;
+          }
+        case AlternativeLoopStmt loop:
+          return loop.Alternatives.All(alt => MayFallThroughAll(alt.Body));
+        case MatchStmt match:
+          return match.Cases.All(c => MayFallThroughAll(c.Body));
+        case SkeletonStatement skel:
+          return MayFallThrough(skel.S);
+        default:
+          return true;
+      }
+    }
+
+    static bool MayFallThroughAll(List<Statement> stmts) {
+      // Assume there's no dead code.  (The purpose here is to avoid adding
+      // dead code, so if there's already dead code, we're not making the
+      // situation worse.)
+
+      return stmts.Count == 0 || MayFallThrough(stmts.Last());
+    }
+
+    // Whether the statement may cause a break targeting the given statement,
+    // assuming there's no dead code
+    static bool MayBreak(Statement stmt, Statement target) {
+      switch (stmt) {
+        case BreakStmt brk:
+          return brk.TargetStmt == target;
+        case ReturnStmt _:
+          return false;
+        case BlockStmt block:
+          return block.Body.Any(s => MayBreak(s, target));
+        case IfStmt ifStmt:
+          return MayBreak(ifStmt.Thn, target) || MayBreak(ifStmt.Els, target);
+        case WhileStmt whileStmt:
+          return MayBreak(whileStmt.Body, target);
+        case AlternativeLoopStmt loop:
+          return loop.Alternatives.Any(alt => alt.Body.Any(s => MayBreak(s, target)));
+        case MatchStmt match:
+          return match.Cases.Any(c => c.Body.Any(s => MayBreak(s, target)));
+        case SkeletonStatement skel:
+          return MayBreak(skel.S, target);
+        default:
+          return true;
+      }
+    }
+
+    #endregion Preprocessing
+
+    #region Return tupling
+    void TupleReturns() {
+      // First, tuple all method calls in the whole program that need it, since this
+      // step needs the methods to still have the original form, then tuple all the
+      // method declarations in a second step.
+
+      foreach (var method in AllMethods) {
+        if (method.Body != null) {
+          TupleMethodCalls(method.Body);
+        }
+      }
+
+      foreach (var method in AllMethods) {
+        if (method.Outs.Count(f => !f.IsGhost) > 1) {
+          TupleMethodDecl(method);
+        }
+      }
+    }
+
+    void TupleMethodDecl(Method method) {
+      var origOuts = method.Outs.FindAll(f => !f.IsGhost);
+      var outTypes = origOuts.ConvertAll(f => f.Type);
+
+      var tupleOut = new Formal(NT, IdGen.FreshId("_tuple"), TupleType(outTypes), inParam: false, isGhost: false);
+
+      // Arbitrarily, make the tuple the first out parameter (followed only by
+      // ghost outs).
+      var newOuts = new List<Formal>();
+      newOuts.Add(tupleOut);
+      newOuts.AddRange(method.Outs.FindAll(f => f.IsGhost));
+      method.Outs.Clear();
+      method.Outs.AddRange(newOuts);
+
+      Contract.Assert(!(method.Body is DividedBlockStmt)); // constructors don't have out parameters
+
+      // Turn each original out parameter into a local variable
+      var locals = new List<LocalVariable>();
+      var outsToLocals = new Dictionary<Formal, LocalVariable>();
+      foreach (var outParam in origOuts) {
+        Contract.Assert(!outParam.IsGhost);
+        var local = new LocalVariable(outParam.Tok, NT, outParam.Name, outParam.Type, isGhost: false);
+        local.type = outParam.Type; // setting it in the constructor only sets OptionalType
+        locals.Add(local);
+        outsToLocals[outParam] = local;
+      }
+
+      if (method.Body != null) {
+        var oldOutDecl = new VarDeclStmt(NT, NT, outsToLocals.Values.ToList(), update: null);
+        var renamer = InPlaceRenamer(outsToLocals);
+        foreach (var stmt in method.Body.Body) {
+          stmt.TransformDeepSubExpressions(renamer);
+        }
+        method.Body.Body.Insert(0, oldOutDecl);
+
+        // Wherever there is a return or yield, add an update to the tuple out
+        // from the locals
+        var returnXform = Transformer<Statement>.CreateRecursive((self, stmt) => {
+          if (stmt is ProduceStmt produce) {
+            // If the outs are o, p, and q, turn
+            //   return;
+            // into
+            //   tuple := (o, p, q);
+            //   return;
+            // (Note that there are no returns with RHSes anymore since we
+            // transformed them earlier.)
+
+            // Create the assignment statement `tuple := (o, p, q)`
+            var tupleExpr = TupleExpr(locals.ConvertAll(l => (Expression) new IdentifierExpr(NT, l)));
+            var assignStmt = new AssignStmt(NT, NT, new IdentifierExpr(NT, tupleOut), new ExprRhs(tupleExpr));
+
+            return new BlockStmt(NT, NT, new List<Statement>() { assignStmt, produce });
+          } else {
+            stmt.TransformSubStatements(self);
+            return stmt;
+          }
+        });
+        method.Body.TransformSubStatements(returnXform);
+      }
+    }
+
+    void TupleMethodCalls(BlockStmt block) {
+      var xform = Transformer<Statement>.CreateRecursive((self, stmt) => {
+        // Look for an UpdateStmt either in stmt itself or in the Update0 field
+        // of a VarDeclStmt
+        UpdateStmt update;
+        if (stmt is UpdateStmt u) {
+          update = u;
+        } else if (stmt is VarDeclStmt varDecl) {
+          update = varDecl.Update as UpdateStmt;
+        } else {
+          update = null;
+        }
+
+        if (update == null) {
+          stmt.TransformSubStatements(self);
+          return stmt;
+        }
+
+        if (!(update.ResolvedStatements.Count == 1 &&
+            update.ResolvedStatements[0] is CallStmt call &&
+            call.Method.Outs.Count(f => !f.IsGhost) > 1)) {
+          // Don't recurse; in the VarDeclStmt case, we already know we're not
+          // interested in the sub-statement
+          return stmt;
+        }
+
+        var realOuts = call.Method.Outs.FindAll(f => !f.IsGhost);
+        var typeSubst = call.MethodSelect.TypeArgumentSubstitutions();
+        var realOutTypes = realOuts.ConvertAll(e => Resolver.SubstType(e.Type, typeSubst));
+        Statement tupleDecl;
+        var tupleVar = DeclareLocalVariable("_outcollector", TupleType(realOutTypes), rhs: null, isGhost: false, out tupleDecl);
+
+        // The new LHSes consist of a single tuple followed by any number of
+        // ghost LHSes from the original statement
+        var newLhss = new List<Expression>() { new IdentifierExpr(NT, tupleVar) };
+        var origRealLhss = new List<Expression>();
+        for (var i = 0; i < call.Method.Outs.Count; i++) {
+          if (call.Method.Outs[i].IsGhost) {
+            newLhss.Add(call.Lhs[i]);
+          } else {
+            origRealLhss.Add(call.Lhs[i]);
+          }
+        }
+        call.Lhs.Clear();
+        call.Lhs.AddRange(newLhss);
+
+        var newStmts = new List<Statement>() { tupleDecl, stmt };
+        for (var i = 0; i < origRealLhss.Count; i++) {
+          var lhs = origRealLhss[i];
+          // origRealLhss has the LHSes for non-ghost out parameters, but some
+          // of those LHSes might be ghost variables themselves
+          if (Compiler.IsGhostLHS(lhs)) {
+            continue;
+          }
+
+          var rhs = new ExprRhs(TupleProjExpr(new IdentifierExpr(NT, tupleVar), i));
+          newStmts.Add(new AssignStmt(NT, NT, lhs, rhs));
+        }
+
+        return new BlockStmt(NT, NT, newStmts) {
+          Scoped = false // allow a VarDeclStmt to be visible outside the block
+        };
+      });
+      block.TransformSubStatements(xform);
+    }
+    #endregion Return tupling
+
+    #region Assignment sequentialization
+
+    void SequentializeAssignments() {
+      foreach (var module in Program.CompileModules) {
         foreach (var decl in module.TopLevelDecls.OfType<TopLevelDeclWithMembers>()) {
           foreach (var method in decl.Members.OfType<Method>()) {
             if (method.Body != null) {
@@ -74,13 +388,6 @@ namespace Microsoft.Dafny {
         } else {
           return stmt;
         }
-      } else if (stmt is ProduceStmt prod && prod.hiddenUpdate != null) {
-        // Sequentializing the hidden update statement might produce a block statement, so separate
-        // out the update from the return/yield
-        var update = Sequentialize(prod.hiddenUpdate);
-        prod.hiddenUpdate = null;
-        prod.rhss = null;
-        return new BlockStmt(Token.NoToken, Token.NoToken, new List<Statement>() { update, prod });
       } else if (stmt is UpdateStmt update && update.ResolvedStatements.Count != 1) {
         Contract.Assert(update.Lhss.Count == update.Rhss.Count);
         var rhsDecls = new List<Statement>();
@@ -98,7 +405,9 @@ namespace Microsoft.Dafny {
           var stableLhs = EvaluateLhs(lhs, isGhost, out var decls);
           lhsDecls.AddRange(decls);
 
-          var assign = new AssignStmt(update.Tok, update.EndTok, stableLhs, new ExprRhs(rhsVar));
+          var assign = new AssignStmt(update.Tok, update.EndTok, stableLhs, new ExprRhs(new IdentifierExpr(NT, rhsVar))) {
+            IsGhost = isGhost
+          };
           assigns.Add(assign);
         }
 
@@ -161,18 +470,100 @@ namespace Microsoft.Dafny {
       } else {
         var x = DeclareLocalVariable(prefix, expr.Type, new ExprRhs(expr), isGhost, out var stmt);
         stmts = new List<Statement>() { stmt };
-        return x;
+        return new IdentifierExpr(NT, x);
       }
     }
 
-    Expression DeclareLocalVariable(string prefix, Type type, AssignmentRhs rhs, bool isGhost, out Statement decl) {
-      var x = new LocalVariable(Token.NoToken, Token.NoToken, IdGen.FreshId(prefix), type, isGhost);
-      x.type = type; // constructor argument sets OptionalType, not type
-      var expr = new IdentifierExpr(Token.NoToken, x);
-      var setX = new UpdateStmt(Token.NoToken, Token.NoToken, new List<Expression>() { expr }, new List<AssignmentRhs>() { rhs });
-      setX.ResolvedStatements.Add(new AssignStmt(Token.NoToken, Token.NoToken, expr, rhs));
-      decl = new VarDeclStmt(Token.NoToken, Token.NoToken, new List<LocalVariable>() { x }, setX);
-      return expr;
+    #endregion Assignment sequentialization
+
+    #endregion Passes
+
+    #region Utilities
+    static readonly IToken NT = Token.NoToken;
+
+    IEnumerable<Method> AllMethods {
+      get {
+        foreach (var module in Program.CompileModules) {
+          foreach (var decl in module.TopLevelDecls.OfType<TopLevelDeclWithMembers>()) {
+            foreach (var method in decl.Members.OfType<Method>()) {
+              yield return method;
+            }
+          }
+        }
+      }
     }
+
+    LocalVariable DeclareLocalVariable(string prefix, Type type, AssignmentRhs/*?*/ rhs, bool isGhost, out Statement decl) {
+      var x = new LocalVariable(NT, NT, IdGen.FreshId(prefix), type, isGhost);
+      x.type = type; // constructor argument sets OptionalType, not type
+      UpdateStmt update;
+      if (rhs != null) {
+        update = new UpdateStmt(NT, NT, new List<Expression>() { new IdentifierExpr(NT, x) }, new List<AssignmentRhs>() { rhs });
+        update.ResolvedStatements.Add(new AssignStmt(NT, NT, new IdentifierExpr(NT, x), rhs) { IsGhost = isGhost });
+      } else {
+        update = null;
+      }
+      decl = new VarDeclStmt(NT, NT, new List<LocalVariable>() { x }, update);
+      return x;
+    }
+
+    Type TupleType(params Type[] types) {
+      return TupleType(types.ToList());
+    }
+
+    Type TupleType(List<Type> types) {
+      var decl = TupleTypeDecl(types.Count);
+      return new UserDefinedType(NT, decl.Name, decl, types.ToList());
+    }
+
+    TupleTypeDecl TupleTypeDecl(int length) {
+      // FIXME: We should set allowCreationOfNewType to true, but since the resolver
+      // hasn't run, doing so may give us an unresolved TupleTypeDecl (which, for
+      // instance, has no destructors).
+      return Program.BuiltIns.TupleType(NT, length, allowCreationOfNewType: false);
+    }
+
+    Expression TupleExpr(params Expression[] exprs) {
+      return TupleExpr(exprs.ToList());
+    }
+
+    Expression TupleExpr(List<Expression> exprs) {
+      var decl = TupleTypeDecl(exprs.Count);
+      return new DatatypeValue(NT, decl.DefaultCtor, exprs.ConvertAll(expr => expr.Type), exprs, isCoCall: false);
+    }
+
+    Expression TupleProjExpr(Expression tuple, int index) {
+      return new MemberSelectExpr(NT, tuple, tuple.Type.AsDatatype.Ctors[0].Destructors[index]);
+    }
+
+    Transformer<Expression> InPlaceRenamer<K, V>(Dictionary<K, V> dict) where V : class, IVariable {
+      return InPlaceRenamer(v => {
+        return v is K k && dict.TryGetValue(k, out var val) ? val : null;
+      });
+    }
+
+    Transformer<Expression> InPlaceRenamer(Func<IVariable, IVariable/*?*/> f) {
+      return InPlaceSubstituter(var => {
+        var newVar = f(var);
+        if (newVar == null) {
+          return null;
+        } else {
+          return new IdentifierExpr(NT, newVar);
+        }
+      });
+    }
+
+    Transformer<Expression> InPlaceSubstituter(Func<IVariable, Expression/*?*/> f) {
+      return Transformer<Expression>.CreateRecursive((self, expr) => {
+        var idExpr = expr as IdentifierExpr ?? (expr as ConcreteSyntaxExpression)?.ResolvedExpression as IdentifierExpr;
+        if (idExpr != null) {
+          return f(idExpr.Var) ?? idExpr;
+        } else {
+          expr.TransformSubExpressions(self);
+          return expr;
+        }
+      });
+    }
+    #endregion
   }
 }

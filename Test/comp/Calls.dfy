@@ -37,6 +37,16 @@ method A3(x: int, y: bool) returns (a: int, b: bool, c: int) {
   return a, b, u;
 }
 
+// HACK: The pre-compiler needs access to the n-tuple type whenever there's
+// a method with n non-ghost outs (if compiling to a language with
+// MultipleReturnStyle set to Tuple).  Currently there's no way to add
+// tuple types except through the parser, so we make sure the needed tuples
+// appear in the program as a temporary workaround.
+method SillyMethod() {
+  var a : (int, int) := (2, 3);
+  var b : (int, int, int) := (4, 8, 15);
+}
+
 method Main()
 {
   var w, a, b, c, d, e, f;

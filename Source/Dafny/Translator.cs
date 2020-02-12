@@ -10617,6 +10617,7 @@ namespace Microsoft.Dafny {
       var term = s.Substitute(exists.Term);
       var attrs = s.SubstAttributes(exists.Attributes);
       var ex = new ExistsExpr(exists.tok, exists.TypeArgs, bvars, range, term, attrs);
+      ex.Type = exists.Type;
       if (exists.Bounds != null) {
         ex.Bounds = exists.Bounds.ConvertAll(bound => s.SubstituteBoundedPool(bound));
       }

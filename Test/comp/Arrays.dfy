@@ -68,9 +68,20 @@ method InitTests() {
   var aa := new lowercase[3];
   PrintArray(aa);
   var s := "hello";
-  aa := new lowercase[|s|](i requires 0 <= i < |s| => s[i]);
+  var dummy := 0;
+  aa, dummy := SeqToArray(s);
   PrintArray(aa);
 }
+
+method SeqToArray<A>(xs : seq<A>)
+    returns (arr : array<A>, dummy : int) // test multiple return values
+    ensures arr[..] == xs
+{
+  return new A[|xs|](i requires 0 <= i < |xs| => xs[i]), 0;
+}
+
+// Force the existence of pairs; see note on SillyMethod in Calls.dfy
+method SillyMethod() returns (a : (int, int)) { }
 
 method MultipleDimensions() {
   var matrix := new int[2,8];
