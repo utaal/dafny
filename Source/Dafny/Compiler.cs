@@ -302,7 +302,6 @@ namespace Microsoft.Dafny {
     protected void EndStmt(TargetWriter wr) { wr.WriteLine(StmtTerminator); }
     protected abstract void DeclareLocalOutVar(string name, Type type, Bpl.IToken tok, string rhs, bool useReturnStyleOuts, TargetWriter wr);
     protected virtual void EmitActualOutArg(string actualOutParamName, TextWriter wr) { }  // actualOutParamName is always the name of a local variable; called only for non-return-style outs
-    protected virtual void EmitOutParameterSplits(string outCollector, List<string> actualOutParamNames, TargetWriter wr) { }  // called only for return-style calls
     /// Optionally add something immediately around an actual method call (that
     /// is, not including all the statements needed to declare variables as out
     /// parameters and set the actual LHSes afterward).  By default, does

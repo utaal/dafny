@@ -1114,11 +1114,6 @@ namespace Microsoft.Dafny
       wr.Write("out {0}", actualOutParamName);
     }
 
-    protected override void EmitOutParameterSplits(string outCollector, List<string> actualOutParamNames, TargetWriter wr) {
-      Contract.Assert(actualOutParamNames.Count == 1);
-      EmitAssignment(actualOutParamNames[0], null, outCollector, null, wr);
-    }
-
     protected override void EmitActualTypeArgs(List<Type> typeArgs, Bpl.IToken tok, TextWriter wr) {
       if (typeArgs.Count != 0) {
         wr.Write("<" + TypeNames(typeArgs, wr, tok) + ">");

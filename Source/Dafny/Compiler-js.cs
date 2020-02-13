@@ -1008,16 +1008,6 @@ namespace Microsoft.Dafny {
       DeclareLocalVar(name, type, tok, false, rhs, wr);
     }
 
-    protected override void EmitOutParameterSplits(string outCollector, List<string> actualOutParamNames, TargetWriter wr) {
-      if (actualOutParamNames.Count == 1) {
-        EmitAssignment(actualOutParamNames[0], null, outCollector, null, wr);
-      } else {
-        for (var i = 0; i < actualOutParamNames.Count; i++) {
-          wr.WriteLine("{0} = {1}[{2}];", actualOutParamNames[i], outCollector, i);
-        }
-      }
-    }
-
     protected override void EmitActualTypeArgs(List<Type> typeArgs, Bpl.IToken tok, TextWriter wr) {
       // emit nothing
     }
@@ -1041,7 +1031,8 @@ namespace Microsoft.Dafny {
       } else if (outParams.Count == 1) {
         wr.WriteLine("return {0};", IdName(outParams[0]));
       } else {
-        wr.WriteLine("return [{0}];", Util.Comma(outParams, IdName));
+        Contract.Assert(false);
+        throw new cce.UnreachableException();
       }
     }
 

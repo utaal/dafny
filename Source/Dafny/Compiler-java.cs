@@ -442,19 +442,13 @@ namespace Microsoft.Dafny{
         // No need for an abstract version of a static method or a constructor
         return null;
       }
-      string targetReturnTypeReplacement = null;
-      int nonGhostOuts = 0;
-      int nonGhostIndex = 0;
-      for (int i = 0; i < m.Outs.Count; i++) {
-        if (!m.Outs[i].IsGhost) {
-          nonGhostOuts += 1;
-          nonGhostIndex = i;
-        }
-      }
-      if (nonGhostOuts == 1) {
-        targetReturnTypeReplacement = TypeName(m.Outs[nonGhostIndex].Type, wr, m.Outs[nonGhostIndex].tok);
-      } else if (nonGhostOuts > 1) {
-        targetReturnTypeReplacement = DafnyTupleClassPrefix + nonGhostOuts;
+      string returnType;
+      var nonGhostOuts = m.Outs.FindAll(f => !f.IsGhost);
+      Contract.Assert(nonGhostOuts.Count <= 1);
+      if (nonGhostOuts.Count == 1) {
+        returnType = TypeName(nonGhostOuts[0].Type, wr, nonGhostOuts[0].tok);
+      } else {
+        returnType = "void";
       }
       var customReceiver = NeedsCustomReceiver(m);
       var receiverType = UserDefinedType.FromTopLevelDecl(m.tok, m.EnclosingClass, m.TypeArgs);
@@ -462,7 +456,7 @@ namespace Microsoft.Dafny{
       if (m.TypeArgs.Count != 0) {
         wr.Write($"<{TypeParameters(m.TypeArgs)}> ");
       }
-      wr.Write("{0} {1}", targetReturnTypeReplacement ?? "void", IdName(m));
+      wr.Write("{0} {1}", returnType, IdName(m));
       wr.Write("(");
       var nTypes = WriteRuntimeTypeDescriptorsFormals(m, m.TypeArgs, useAllTypeArgs: true, wr);
       var sep = nTypes > 0 ? ", " : "";
@@ -2181,6 +2175,9 @@ namespace Microsoft.Dafny{
         wr.WriteLine("return;");
       } else if (outParams.Count == 1){
         wr.WriteLine($"return {IdName(outParams[0])};");
+      } else {
+        Contract.Assert(false);
+        throw new cce.UnreachableException();
       }
     }
 
