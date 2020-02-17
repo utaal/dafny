@@ -119,6 +119,11 @@ namespace Microsoft.Dafny {
         }
       }
 
+      // Make sure that lots of tuple types exist in case the pre-compiler needs them.
+      for (int arity = 2; arity <= 22; arity++) {
+        var _ = builtIns.TupleType(Bpl.Token.NoToken, arity, allowCreationOfNewType: true);
+      }
+
       if (!(DafnyOptions.O.DisallowIncludes || DafnyOptions.O.PrintIncludesMode == DafnyOptions.IncludesModes.Immediate)) {
         string errString = ParseIncludes(module, builtIns, DafnyFile.fileNames(files), new Errors(reporter));
         if (errString != null) {

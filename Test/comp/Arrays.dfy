@@ -80,9 +80,6 @@ method SeqToArray<A>(xs : seq<A>)
   return new A[|xs|](i requires 0 <= i < |xs| => xs[i]), 0;
 }
 
-// Force the existence of pairs; see note on SillyMethod in Calls.dfy
-method SillyMethod() returns (a : (int, int)) { }
-
 method MultipleDimensions() {
   var matrix := new int[2,8];
   PrintMatrix(matrix);
