@@ -165,6 +165,10 @@
     <Compile Include="Util.cs" />
     <Compile Include="Compiler.cs" />
     <Compile Include="BigIntegerParser.cs" />
+    <Compile Include="CoreAst.cs" />
+    <Compile Include="CoreCloner.cs" />
+    <Compile Include="CoreConverter.cs" />
+    <Compile Include="CorePrinter.cs" />
     <Compile Include="DafnyAst.cs" />
     <Compile Include="DafnyMain.cs" />
     <Compile Include="DafnyOptions.cs" />
