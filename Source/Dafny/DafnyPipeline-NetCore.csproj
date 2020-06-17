@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <AssemblyName>DafnyPipeline</AssemblyName>
-    <TargetFramework>netcoreapp2.2</TargetFramework>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
     <DefineConstants>COREFX_SUBSET;ISDAFNYRUNTIMELIB</DefineConstants>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <PackageReference Include="System.CodeDom" Version="4.5.0" />
+    <PackageReference Include="Mono.Cecil" Version="0.11.1" />
   </ItemGroup>
 
 </Project>
