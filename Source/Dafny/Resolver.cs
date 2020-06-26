@@ -3051,56 +3051,64 @@ namespace Microsoft.Dafny
         CheckTypeInference_Member(member);
         if (prevErrCnt == reporter.Count(ErrorLevel.Error)) {
           if (member is Method) {
+            Console.WriteLine("OXIDE: Class " + cl + ", Method " + member);
             var m = (Method)member;
+            // Printer.MethodToString(m)
             if (m.Body != null) {
-              UsageContext usageContext = new UsageContext(m, member.Usage);
+              OwnershipContext ownershipContext = new OwnershipContext(m, member.Usage);
               if (!member.IsStatic && member.Usage == Usage.Linear) {
-                usageContext.available.Add(usageContext.thisId.Var, Available.Available);
+                ownershipContext.available.Add(ownershipContext.thisId.Var, Available.Available);
               }
               foreach (Formal x in m.Ins) {
-                if (x.IsLinear) usageContext.available.Add(x, Available.Available);
+                if (x.IsLinear) ownershipContext.available.Add(x, Available.Available);
               }
               foreach (Formal x in m.Outs) {
-                if (x.IsLinear) usageContext.available.Add(x, Available.Consumed);
+                if (x.IsLinear) ownershipContext.available.Add(x, Available.Consumed);
               }
-              UsageContext outer = UsageContext.Copy(usageContext);
-              usageContext = ComputeGhostInterest(m.Body, m.IsGhost, m, usageContext);
+              OwnershipContext outer = OwnershipContext.Copy(ownershipContext);
+              ownershipContext = ComputeGhostInterest(m.Body, m.IsGhost, m, ownershipContext);
               CheckExpression(m.Body, this, m);
-              PopUsageContext(m.Body.EndTok, outer, usageContext);
-              if (!member.IsStatic && m.Usage == Usage.Linear && usageContext.available[usageContext.thisId.Var] != Available.Consumed) {
+              PopOwnershipContext(m.Body.EndTok, outer, ownershipContext);
+              if (!member.IsStatic && m.Usage == Usage.Linear && ownershipContext.available[ownershipContext.thisId.Var] != Available.Consumed) {
                 reporter.Error(MessageSource.Resolver, member.tok, "linear 'this' must be unavailable at method exit");
               }
               foreach (Formal x in m.Ins) {
-                if (x.IsLinear && usageContext.available[x] != Available.Consumed) {
+                if (x.IsLinear && ownershipContext.available[x] != Available.Consumed) {
                   reporter.Error(MessageSource.Resolver, x, "linear variable must be unavailable at method exit");
                 }
               }
               foreach (Formal x in m.Outs) {
-                if (x.IsLinear && usageContext.available[x] != Available.Available) {
+                if (x.IsLinear && ownershipContext.available[x] != Available.Available) {
                   reporter.Error(MessageSource.Resolver, x, "linear variable must be assigned at method exit");
                 }
               }
+              ownershipContext.astExplorer.Done();
               DetermineTailRecursion(m);
             }
           } else if (member is Function) {
+            Console.WriteLine("OXIDE: Class " + cl + ", Function " + member);
             var f = (Function)member;
             if (!f.IsGhost && f.Body != null) {
-              UsageContext usageContext = new UsageContext(f, member.Usage);
+              OwnershipContext ownershipContext = new OwnershipContext(f, member.Usage);
               if (!member.IsStatic && member.Usage == Usage.Linear) {
-                usageContext.available.Add(usageContext.thisId.Var, Available.Available);
+                ownershipContext.available.Add(ownershipContext.thisId.Var, Available.Available);
               }
               foreach (Formal x in f.Formals) {
-                if (x.IsLinear) usageContext.available.Add(x, Available.Available);
+                if (x.IsLinear) ownershipContext.available.Add(x, Available.Available);
               }
-              CheckIsCompilable(f.Body, usageContext, f.Result != null ? f.Result.Usage : Usage.Ordinary);
-              if (!member.IsStatic && member.Usage == Usage.Linear && usageContext.available[usageContext.thisId.Var] != Available.Consumed) {
+              // NOTE: linearity, functions, ENTRY
+              Console.WriteLine("OXIDE: Function CheckIsCompilable ENTRY");
+              CheckIsCompilable(f.Body, ownershipContext, f.Result != null ? f.Result.Usage : Usage.Ordinary);
+              Console.WriteLine("OXIDE: Function CheckIsCompilable EXIT");
+              if (!member.IsStatic && member.Usage == Usage.Linear && ownershipContext.available[ownershipContext.thisId.Var] != Available.Consumed) {
                 reporter.Error(MessageSource.Resolver, member.tok, "linear 'this' must be unavailable at function exit");
               }
               foreach (Formal x in f.Formals) {
-                if (x.IsLinear && usageContext.available[x] != Available.Consumed) {
+                if (x.IsLinear && ownershipContext.available[x] != Available.Consumed) {
                   reporter.Error(MessageSource.Resolver, x, "linear variable must be unavailable at function exit");
                 }
               }
+              ownershipContext.astExplorer.Done();
             }
             if (f.Body != null) {
               DetermineTailRecursion(f);
@@ -5886,7 +5894,7 @@ namespace Microsoft.Dafny
       protected override void VisitOneExpr(Expression expr) {
         if (expr is StmtExpr) {
           var e = (StmtExpr)expr;
-          resolver.ComputeGhostInterest(e.S, true, CodeContext, null); // ghost, so UsageContext doesn't matter
+          resolver.ComputeGhostInterest(e.S, true, CodeContext, null); // ghost, so OwnershipContext doesn't matter
         }
       }
       protected override void VisitOneStmt(Statement stmt) {
@@ -7112,24 +7120,24 @@ namespace Microsoft.Dafny
     // ----- ComputeGhostInterest ---------------------------------------------------------------------------
     // ------------------------------------------------------------------------------------------------------
 #region ComputeGhostInterest
-    UsageContext ComputeGhostInterest(Statement stmt, bool mustBeErasable, ICodeContext codeContext, UsageContext usageContext) {
+    OwnershipContext ComputeGhostInterest(Statement stmt, bool mustBeErasable, ICodeContext codeContext, OwnershipContext ownershipContext) {
       Contract.Requires(stmt != null);
       Contract.Requires(codeContext != null);
-      var visitor = new GhostInterest_Visitor(codeContext, this, usageContext);
+      var visitor = new GhostInterest_Visitor(codeContext, this, ownershipContext);
       visitor.Visit(stmt, mustBeErasable);
-      return visitor.usageContext;
+      return visitor.ownershipContext;
     }
     class GhostInterest_Visitor
     {
       readonly ICodeContext codeContext;
       readonly Resolver resolver;
-      internal UsageContext usageContext;
-      public GhostInterest_Visitor(ICodeContext codeContext, Resolver resolver, UsageContext usageContext) {
+      internal OwnershipContext ownershipContext;
+      public GhostInterest_Visitor(ICodeContext codeContext, Resolver resolver, OwnershipContext ownershipContext) {
         Contract.Requires(codeContext != null);
         Contract.Requires(resolver != null);
         this.codeContext = codeContext;
         this.resolver = resolver;
-        this.usageContext = usageContext;
+        this.ownershipContext = ownershipContext;
       }
       protected void Error(Statement stmt, string msg, params object[] msgArgs) {
         Contract.Requires(stmt != null);
@@ -7171,7 +7179,7 @@ namespace Microsoft.Dafny
       public void Visit(Statement stmt, bool mustBeErasable) {
         Contract.Requires(stmt != null);
         Contract.Assume(!codeContext.IsGhost || mustBeErasable);  // (this is really a precondition) codeContext.IsGhost ==> mustBeErasable
-        if (usageContext != null) usageContext.AssertNoBorrowed();
+        if (ownershipContext != null) ownershipContext.AssertNoBorrowed();
 
         if (stmt is AssertStmt || stmt is AssumeStmt) {
           stmt.IsGhost = true;
@@ -7214,14 +7222,14 @@ namespace Microsoft.Dafny
           Method method = codeContext as Method;
           var targetWhile = s.TargetStmt as WhileStmt;
           if (targetWhile != null && !s.IsGhost) {
-            UsageContext outer = (UsageContext)targetWhile.usageContext;
-            UsageContext uc = UsageContext.Copy(usageContext);
-            resolver.PopUsageContext(stmt.EndTok, outer, uc);
-            resolver.MergeUsageContexts(s.Tok, outer, uc, true);
-            usageContext.unreachable = true;
+            OwnershipContext outer = (OwnershipContext)targetWhile.ownershipContext;
+            OwnershipContext uc = OwnershipContext.Copy(ownershipContext);
+            resolver.PopOwnershipContext(stmt.EndTok, outer, uc);
+            resolver.MergeOwnershipContexts(s.Tok, outer, uc, true);
+            ownershipContext.unreachable = true;
           } else if (method != null) {
             bool linearInOut = method.Ins.Concat(method.Outs).ToList().Exists(x => x.IsLinear);
-            bool linearHere = usageContext != null && usageContext.available.Count > 0;
+            bool linearHere = ownershipContext != null && ownershipContext.available.Count > 0;
             if (linearInOut || linearHere) {
               Error(stmt, "break statement is not allowed when using linear");
             }
@@ -7239,7 +7247,7 @@ namespace Microsoft.Dafny
           Method method = codeContext as Method;
           if (method != null) {
             bool linearInOut = method.Ins.Concat(method.Outs).ToList().Exists(x => x.IsLinear);
-            bool linearHere = usageContext != null && usageContext.available.Count > 0;
+            bool linearHere = ownershipContext != null && ownershipContext.available.Count > 0;
             if (linearInOut || linearHere) {
               Error(stmt, "{0} statement is not allowed when using linear", kind);
             }
@@ -7290,7 +7298,7 @@ namespace Microsoft.Dafny
           s.IsGhost = (s.Update == null || s.Update.IsGhost) && s.Locals.All(v => v.IsGhost);
           foreach (var local in s.Locals) {
             if (local.Usage == Usage.Linear) {
-              usageContext.available.Add(local, Available.Consumed);
+              ownershipContext.available.Add(local, Available.Consumed);
             }
           }
           if (s.Update != null) {
@@ -7306,14 +7314,14 @@ namespace Microsoft.Dafny
           }
           s.IsGhost = s.LocalVars.All(v => v.IsGhost);
           if (!s.IsGhost) {
-            resolver.CheckIsCompilable(s.RHS, usageContext, s.Usage);
+            resolver.CheckIsCompilable(s.RHS, ownershipContext, s.Usage);
           }
-          if (s.Usage == Usage.Shared && usageContext.Borrows()) {
+          if (s.Usage == Usage.Shared && ownershipContext.Borrows()) {
             Error(s.RHS, "cannot borrow variable because expression returns a shared result");
           }
           foreach (var local in s.LocalVars) {
             if (local.Usage == Usage.Linear) {
-              usageContext.available[local] = Available.Available;
+              ownershipContext.available[local] = Available.Available;
             }
           }
 
@@ -7334,9 +7342,9 @@ namespace Microsoft.Dafny
           } else {
             if (gk == AssignStmt.NonGhostKind.Field) {
               var mse = (MemberSelectExpr)lhs;
-              resolver.CheckIsCompilable(mse.Obj, usageContext, mse.Member.IsGhost ? Usage.Ghost : Usage.Ordinary);
+              resolver.CheckIsCompilable(mse.Obj, ownershipContext, mse.Member.IsGhost ? Usage.Ghost : Usage.Ordinary);
             } else if (gk == AssignStmt.NonGhostKind.ArrayElement) {
-              resolver.CheckIsCompilable(lhs, usageContext, Usage.Ordinary);
+              resolver.CheckIsCompilable(lhs, ownershipContext, Usage.Ordinary);
             }
             var x = lhs as IdentifierExpr;
             if (x != null && HasLinearity(x.Var.Usage) && !(s.Rhs is ExprRhs)) {
@@ -7345,13 +7353,13 @@ namespace Microsoft.Dafny
             if (s.Rhs is ExprRhs) {
               var rhs = (ExprRhs)s.Rhs;
               Usage expectedUsage = x != null ? x.Var.Usage : Usage.Ordinary;
-              resolver.CheckIsCompilable(rhs.Expr, usageContext, expectedUsage);
+              resolver.CheckIsCompilable(rhs.Expr, ownershipContext, expectedUsage);
               if (x != null && x.Var.IsLinear) {
-                if (usageContext.available[x.Var] != Available.Consumed) {
+                if (ownershipContext.available[x.Var] != Available.Consumed) {
                   Error(x, "variable must be unavailable before assignment");
                 }
-                usageContext.available[x.Var] = Available.Available;
-              } else if (x != null && x.Var.IsShared && usageContext.Borrows()) {
+                ownershipContext.available[x.Var] = Available.Available;
+              } else if (x != null && x.Var.IsShared && ownershipContext.Borrows()) {
                 Error(rhs.Expr, "cannot borrow variable because expression returns a shared result");
               }
             } else if (s.Rhs is HavocRhs) {
@@ -7370,7 +7378,7 @@ namespace Microsoft.Dafny
               if (rhs.InitCall != null) {
                 foreach (var inArg in rhs.InitCall.Method.Ins.Zip(rhs.InitCall.Args)) {
                   if (!inArg.Item1.IsGhost) {
-                    resolver.CheckIsCompilable(inArg.Item2, usageContext, inArg.Item1.Usage);
+                    resolver.CheckIsCompilable(inArg.Item2, ownershipContext, inArg.Item1.Usage);
                   }
                 }
               }
@@ -7392,23 +7400,23 @@ namespace Microsoft.Dafny
             bool returnsShared = callee.Outs.Exists(o => o.IsShared);
             bool isPureCall = callee.Mod.Expressions.Count == 0 && callee.Outs.TrueForAll(x => x.Usage != Usage.Shared);
             if (!callee.IsGhost) {
-              resolver.CheckIsCompilable(s.Receiver, usageContext, callee.Usage);
+              resolver.CheckIsCompilable(s.Receiver, ownershipContext, callee.Usage);
               j = 0;
-              if (usageContext != null) {
-                usageContext.insidePureCall = isPureCall;
+              if (ownershipContext != null) {
+                ownershipContext.insidePureCall = isPureCall;
               }
               foreach (var e in s.Args) {
                 Contract.Assume(j < callee.Ins.Count);  // this should have already been checked by the resolver
                 if (!callee.Ins[j].IsGhost) {
-                  resolver.CheckIsCompilable(e, usageContext, callee.Ins[j].Usage);
+                  resolver.CheckIsCompilable(e, ownershipContext, callee.Ins[j].Usage);
                 }
                 j++;
               }
-              if (usageContext != null) {
-                usageContext.insidePureCall = false;
+              if (ownershipContext != null) {
+                ownershipContext.insidePureCall = false;
               }
             }
-            if (returnsShared && usageContext.Borrows()) {
+            if (returnsShared && ownershipContext.Borrows()) {
               Error(s, "cannot borrow variable because method returns a shared result");
             }
             j = 0;
@@ -7441,10 +7449,10 @@ namespace Microsoft.Dafny
               } else if (jUsage == Usage.Linear) {
                 if (xUsage != Usage.Linear) {
                   Error(x, "variable must be linear");
-                } else if (usageContext.available[x.Var] != Available.Consumed) {
+                } else if (ownershipContext.available[x.Var] != Available.Consumed) {
                   Error(x, "variable must be unavailable before assignment");
                 }
-                usageContext.available[x.Var] = Available.Available;
+                ownershipContext.available[x.Var] = Available.Available;
               } else if (xUsage != jUsage) {
                 Error(x, "expected {0} variable, found {1} variable", UsageName(jUsage), UsageName(xUsage));
               }
@@ -7454,11 +7462,11 @@ namespace Microsoft.Dafny
 
         } else if (stmt is BlockStmt) {
           var s = (BlockStmt)stmt;
-          UsageContext outer = UsageContext.Copy(usageContext);
+          OwnershipContext outer = OwnershipContext.Copy(ownershipContext);
           s.IsGhost = mustBeErasable;  // set .IsGhost before descending into substatements (since substatements may do a 'break' out of this block)
           s.Body.Iter(ss => Visit(ss, mustBeErasable));
           s.IsGhost = s.IsGhost || s.Body.All(ss => ss.IsGhost);  // mark the block statement as ghost if all its substatements are ghost
-          resolver.PopUsageContext(stmt.EndTok, outer, usageContext);
+          resolver.PopOwnershipContext(stmt.EndTok, outer, ownershipContext);
 
         } else if (stmt is IfStmt) {
           var s = (IfStmt)stmt;
@@ -7467,19 +7475,19 @@ namespace Microsoft.Dafny
             resolver.reporter.Info(MessageSource.Resolver, s.Tok, "ghost if");
           }
           if (!s.IsGhost && s.Guard != null) {
-            resolver.CheckIsCompilable(s.Guard, usageContext, s.IsGhost ? Usage.Ghost : Usage.Ordinary);
+            resolver.CheckIsCompilable(s.Guard, ownershipContext, s.IsGhost ? Usage.Ghost : Usage.Ordinary);
           }
-          if (usageContext != null) usageContext.Unborrow();
-          UsageContext uc2 = UsageContext.Copy(usageContext);
+          if (ownershipContext != null) ownershipContext.Unborrow();
+          OwnershipContext uc2 = OwnershipContext.Copy(ownershipContext);
           Visit(s.Thn, s.IsGhost);
-          UsageContext uc1 = usageContext;
-          usageContext = uc2;
+          OwnershipContext uc1 = ownershipContext;
+          ownershipContext = uc2;
           if (s.Els != null) {
             Visit(s.Els, s.IsGhost);
           }
           // if both branches were all ghost, then we can mark the enclosing statement as ghost as well
           s.IsGhost = s.IsGhost || (s.Thn.IsGhost && (s.Els == null || s.Els.IsGhost));
-          resolver.MergeUsageContexts(s.Tok, uc1, uc2);
+          resolver.MergeOwnershipContexts(s.Tok, uc1, uc2);
 
         } else if (stmt is AlternativeStmt) {
           var s = (AlternativeStmt)stmt;
@@ -7504,18 +7512,18 @@ namespace Microsoft.Dafny
             s.Mod.Expressions.Iter(resolver.DisallowNonGhostFieldSpecifiers);
           }
           if (!s.IsGhost && s.Guard != null) {
-            resolver.CheckIsCompilable(s.Guard, usageContext, s.IsGhost ? Usage.Ghost : Usage.Ordinary);
+            resolver.CheckIsCompilable(s.Guard, ownershipContext, s.IsGhost ? Usage.Ghost : Usage.Ordinary);
           }
-          if (usageContext != null) usageContext.Unborrow();
+          if (ownershipContext != null) ownershipContext.Unborrow();
           if (s.Body != null) {
-            UsageContext uc1 = UsageContext.Copy(usageContext);
-            s.usageContext = uc1;
+            OwnershipContext uc1 = OwnershipContext.Copy(ownershipContext);
+            s.ownershipContext = uc1;
             Visit(s.Body, s.IsGhost);
             if (s.Body.IsGhost && !s.Decreases.Expressions.Exists(e => e is WildcardExpr)) {
               s.IsGhost = true;
             }
             if (!s.IsGhost) {
-              resolver.MergeUsageContexts(s.Tok, uc1, usageContext, true);
+              resolver.MergeOwnershipContexts(s.Tok, uc1, ownershipContext, true);
             }
           }
 
@@ -7578,29 +7586,29 @@ namespace Microsoft.Dafny
             resolver.reporter.Info(MessageSource.Resolver, s.Tok, "ghost match");
           }
           if (!s.IsGhost) {
-            resolver.CheckIsCompilable(s.Source, usageContext, s.Usage);
+            resolver.CheckIsCompilable(s.Source, ownershipContext, s.Usage);
           }
-          if (s.Usage == Usage.Shared && usageContext.Borrows()) {
+          if (s.Usage == Usage.Shared && ownershipContext.Borrows()) {
             Error(s.Source, "cannot borrow variable because expression returns a shared result");
           }
-          if (usageContext != null) usageContext.Unborrow();
+          if (ownershipContext != null) ownershipContext.Unborrow();
           bool isFirst = true;
-          var uc1 = UsageContext.Copy(usageContext);
+          var uc1 = OwnershipContext.Copy(ownershipContext);
           foreach (var c in s.Cases) {
-            UsageContext uc2 = UsageContext.Copy(usageContext);
+            OwnershipContext uc2 = OwnershipContext.Copy(ownershipContext);
             if (!isFirst) {
-              usageContext = UsageContext.Copy(uc1);
+              ownershipContext = OwnershipContext.Copy(uc1);
             }
             foreach (var x in c.Arguments) {
               if (x.Usage == Usage.Linear) {
-                usageContext.available.Add(x, Available.Available);
+                ownershipContext.available.Add(x, Available.Available);
               }
             }
             c.Body.Iter(ss => Visit(ss, s.IsGhost));
-            if (usageContext != null) usageContext.Unborrow();
-            resolver.PopUsageContext(c.tok, uc1, usageContext);
+            if (ownershipContext != null) ownershipContext.Unborrow();
+            resolver.PopOwnershipContext(c.tok, uc1, ownershipContext);
             if (!isFirst) {
-              resolver.MergeUsageContexts(s.Tok, uc2, usageContext);
+              resolver.MergeOwnershipContexts(s.Tok, uc2, ownershipContext);
             }
             isFirst = false;
           }
@@ -7620,7 +7628,7 @@ namespace Microsoft.Dafny
         } else {
           Contract.Assert(false); throw new cce.UnreachableException();
         }
-        if (usageContext != null) usageContext.Unborrow();
+        if (ownershipContext != null) ownershipContext.Unborrow();
       }
     }
 #endregion
@@ -14949,37 +14957,117 @@ namespace Microsoft.Dafny
       // (In other words, if s does not consume x, s can borrow x temporarily, releasing x after s finishes.)
     }
 
-    class UsageContext {
+    class AstExplorer
+    {
+      class AstStackEl {
+        internal String name;
+        internal String edgeLabel;
+      }
+
+      internal AstExplorer(ICallable codeContext) {
+        System.IO.Directory.CreateDirectory("oxide-target");
+        if (codeContext is Method) {
+          var name = "oxide-target/" + ((Method) codeContext).FullName + ".ast.dot";
+          Console.WriteLine("Open " + name);
+          astWriter = new System.IO.StreamWriter(name);
+        } else if (codeContext is Function) {
+          var name = "oxide-target/" + ((Function) codeContext).FullName + ".ast.dot";
+          Console.WriteLine("Open " + name);
+          astWriter = new System.IO.StreamWriter(name); 
+        }
+        if (astWriter != null) {
+          astWriter.WriteLine(@"
+digraph AST {
+  graph [fontname=""monospace""];
+  node [fontname=""monospace""];
+  edge [fontname=""monospace""];");
+        }
+      }
+      internal System.IO.StreamWriter astWriter;
+      int astNextNodeId;
+      System.Collections.Generic.Stack<AstStackEl> astParentNodes = new System.Collections.Generic.Stack<AstStackEl>();
+
+      String AstNextNodeId() {
+        this.astNextNodeId += 1;
+        return "node" + this.astNextNodeId;
+      }
+
+      internal String AstNode(String label) {
+        var nodeId = AstNextNodeId();
+        if (astParentNodes.Count > 0) {
+          var top = astParentNodes.Peek();
+          this.astWriter.Write(top.name + " -> " + nodeId);
+          if (top.edgeLabel != null) {
+            this.astWriter.Write(" [label=\"" + top.edgeLabel + "\"]");
+          }
+          this.astWriter.WriteLine();
+        }
+        this.astWriter.WriteLine(nodeId + " [shape=\"none\", label=\"" + label + "\"]");
+        return nodeId;
+      }
+
+      internal void PushAstNode(String label) {
+        var nodeId = AstNode(label);
+        astParentNodes.Push(new AstStackEl { name = nodeId, edgeLabel = null });
+      }
+
+      internal void PopAstNode() {
+        astParentNodes.Pop();
+      }
+      
+      internal void StartSubExpressions(String label) {
+        astParentNodes.Peek().edgeLabel = label;
+      }
+
+      internal void StopSubExpressions() {
+        astParentNodes.Peek().edgeLabel = null; 
+      }
+
+      internal void Done() {
+        Contract.Assert(astParentNodes.Count == 0);
+        astWriter.WriteLine("}");
+        astWriter.Close();
+      }
+
+    }
+
+    class OwnershipContext {
       internal Dictionary<IVariable, Available> available = new Dictionary<IVariable, Available>();
       internal IdentifierExpr thisId;
       internal bool unreachable = false;
       internal ICallable codeContext;
       internal bool insidePureCall;
 
-      internal UsageContext(ICallable codeContext, IdentifierExpr thisId) {
+      internal AstExplorer astExplorer { get; private set; }      
+
+      internal OwnershipContext(ICallable codeContext, IdentifierExpr thisId) {
         this.codeContext = codeContext;
         this.thisId = thisId;
       }
 
-      internal UsageContext(ICallable codeContext, Usage thisUsage)
+      internal OwnershipContext(ICallable codeContext, Usage thisUsage)
         : this(codeContext, new IdentifierExpr(Token.NoToken,
           new Formal(Token.NoToken, "this", new SelfType()/*arbitrary, type doesn't matter*/, true, thisUsage))) {
-      }
 
-      internal UsageContext Copy() {
-        UsageContext uc = new UsageContext(codeContext, thisId);
+        this.astExplorer = new AstExplorer(codeContext);
+      }
+      
+
+      internal OwnershipContext Copy() {
+        OwnershipContext uc = new OwnershipContext(codeContext, thisId);
         foreach (var k in available.Keys) {
           uc.available.Add(k, available[k]);
         }
         uc.unreachable = unreachable;
         uc.insidePureCall = insidePureCall;
+        uc.astExplorer = astExplorer;
         return uc;
       }
 
-      internal static UsageContext Copy(UsageContext uc) {
+      internal static OwnershipContext Copy(OwnershipContext uc) {
         return (uc == null) ? null : uc.Copy();
       }
-
+      
       internal bool Borrows() {
         return available.Values.Contains(Available.Borrowed);
       }
@@ -15001,24 +15089,24 @@ namespace Microsoft.Dafny
       }
     }
 
-    void MaybeIntroduceLetBang(IToken tok, Usage usage, UsageContext usageContext, List<IVariable> borrow) {
+    void MaybeIntroduceLetBang(IToken tok, Usage usage, OwnershipContext ownershipContext, List<IVariable> borrow) {
       foreach (var x in borrow) {
-        if (usageContext.available[x] == Available.Consumed) {
+        if (ownershipContext.available[x] == Available.Consumed) {
           // If Body consumed x, try to introduce let!(x) here
           if (usage == Usage.Shared) {
             reporter.Error(MessageSource.Resolver, tok, "cannot borrow {0} when assigning to shared variable", x.Name);
           }
         } else {
           // Otherwise, we don't introduce let!(x) here; just propagate the fact that x was Borrowed
-          usageContext.available[x] = Available.Borrowed;
+          ownershipContext.available[x] = Available.Borrowed;
         }
       }
     }
 
     // Check that any extra variables in inner are unavailable, remove extra variables
-    void PopUsageContext(IToken tok, UsageContext outer, UsageContext inner) {
-      if (inner == null) inner = new UsageContext(null, null);
-      if (outer == null) outer = new UsageContext(null, null);
+    void PopOwnershipContext(IToken tok, OwnershipContext outer, OwnershipContext inner) {
+      if (inner == null) inner = new OwnershipContext(null, null);
+      if (outer == null) outer = new OwnershipContext(null, null);
       foreach (var k in inner.available.Keys.ToList()) {
         if (!outer.available.ContainsKey(k)) {
           if (inner.available[k] != Available.Consumed) {
@@ -15033,9 +15121,9 @@ namespace Microsoft.Dafny
     // Check that they are consistent with each other with respect to Consumed.
     // Make them consistent with each other with respect to Borrowed.
     // requires: uc1 and uc2 have same keys in available
-    void MergeUsageContexts(IToken tok, UsageContext uc1, UsageContext uc2, bool isWhile = false) {
-      if (uc1 == null) uc1 = new UsageContext(null, null);
-      if (uc2 == null) uc2 = new UsageContext(null, null);
+    void MergeOwnershipContexts(IToken tok, OwnershipContext uc1, OwnershipContext uc2, bool isWhile = false) {
+      if (uc1 == null) uc1 = new OwnershipContext(null, null);
+      if (uc2 == null) uc2 = new OwnershipContext(null, null);
       if (uc1.unreachable) {
         uc1.available = uc2.Copy().available;
       }
@@ -15071,10 +15159,10 @@ namespace Microsoft.Dafny
     // Make them Available in inner and return them.
     // outer and inner should have the same keys.
     // (used as part of inferring "let!(x)")
-    static List<IVariable> RemoveInnerBorrowed(UsageContext outer, UsageContext inner) {
+    static List<IVariable> RemoveInnerBorrowed(OwnershipContext outer, OwnershipContext inner) {
       List<IVariable> borrow = new List<IVariable>();
-      if (inner == null) inner = new UsageContext(null, null);
-      if (outer == null) outer = new UsageContext(null, null);
+      if (inner == null) inner = new OwnershipContext(null, null);
+      if (outer == null) outer = new OwnershipContext(null, null);
       foreach (var k in new List<IVariable>(inner.available.Keys)) {
         if (outer.available[k] == Available.Available && inner.available[k] == Available.Borrowed) {
           inner.available[k] = Available.Available;
@@ -15126,14 +15214,14 @@ namespace Microsoft.Dafny
         "";
     }
 
-    static IdentifierExpr ExprAsIdentifier(UsageContext usageContext, Expression expr) {
+    static IdentifierExpr ExprAsIdentifier(OwnershipContext ownershipContext, Expression expr) {
       var i = expr as IdentifierExpr;
       ConcreteSyntaxExpression c = expr as ConcreteSyntaxExpression;
       ThisExpr t = expr as ThisExpr;
       return
         (i != null) ? i :
-        (c != null) ? ExprAsIdentifier(usageContext, c.ResolvedExpression) :
-        (t != null && usageContext != null) ? usageContext.thisId :
+        (c != null) ? ExprAsIdentifier(ownershipContext, c.ResolvedExpression) :
+        (t != null && ownershipContext != null) ? ownershipContext.thisId :
         null;
     }
 
@@ -15145,16 +15233,18 @@ namespace Microsoft.Dafny
       CheckIsCompilable(expr, null, Usage.Ordinary);
     }
 
-    void CheckIsCompilable(Expression expr, UsageContext usageContext, Usage expectedUsage) {
-      IdentifierExpr x = ExprAsIdentifier(usageContext, expr);
-      if (usageContext != null && expectedUsage == Usage.Shared && x != null && x.Var.Usage == Usage.Linear) {
+    void CheckIsCompilable(Expression expr, OwnershipContext ownershipContext, Usage expectedUsage) {
+      System.Console.WriteLine("OXIDE CheckIsCompilable(3): " + expr.ToString());
+      IdentifierExpr x = ExprAsIdentifier(ownershipContext, expr);
+      if (ownershipContext != null && expectedUsage == Usage.Shared && x != null && x.Var.Usage == Usage.Linear) {
+        ownershipContext.astExplorer.AstNode(expr.ToString() + ": " + x.Var.Name);
         // Try to borrow x
-        if (usageContext.available[x.Var] == Available.Consumed) {
+        if (ownershipContext.available[x.Var] == Available.Consumed) {
           reporter.Error(MessageSource.Resolver, expr, "tried to borrow variable, but it was already unavailable");
         }
-        usageContext.available[x.Var] = Available.Borrowed;
+        ownershipContext.available[x.Var] = Available.Borrowed;
       } else {
-        Usage usage = CheckIsCompilable(expr, usageContext);
+        Usage usage = CheckIsCompilable(expr, ownershipContext);
         if (expectedUsage != Usage.Ghost && usage != expectedUsage) {
           reporter.Error(MessageSource.Resolver, expr, "expected {0} expression, found {1} expression",
             UsageName(expectedUsage), UsageName(usage));
@@ -15162,16 +15252,18 @@ namespace Microsoft.Dafny
       }
     }
 
-    Usage CheckIsCompilable(Expression expr, UsageContext usageContext) {
+    Usage CheckIsCompilable(Expression expr, OwnershipContext ownershipContext) {
+      System.Console.WriteLine("OXIDE CheckIsCompilable(2): " + expr.ToString());
       Contract.Requires(expr != null);
       Contract.Requires(expr.WasResolved());  // this check approximates the requirement that "expr" be resolved
 
       if (expr is IdentifierExpr) {
         var e = (IdentifierExpr)expr;
+        ownershipContext.astExplorer.AstNode("IdentifierExpr: " + e.Var.Name);
         if (e.Var != null && e.Var.IsLinear) {
           bool ok = false;
-          if (usageContext != null) {
-            var available = usageContext.available;
+          if (ownershipContext != null) {
+            var available = ownershipContext.available;
             if (available.ContainsKey(e.Var)) {
               if (available[e.Var] == Available.Available) {
                 ok = true;
@@ -15183,7 +15275,7 @@ namespace Microsoft.Dafny
             reporter.Error(MessageSource.Resolver, expr, "linear variable is unavailable here");
           }
         }
-        if (e.Var != null && e.Var.IsShared && usageContext == null) {
+        if (e.Var != null && e.Var.IsShared && ownershipContext == null) {
           reporter.Error(MessageSource.Resolver, expr, "shared variable is out of scope here");
         }
         if (e.Var != null && e.Var.IsGhost) {
@@ -15192,45 +15284,55 @@ namespace Microsoft.Dafny
         }
         return e.Var.Usage;
 
-      } else if (expr is ThisExpr && usageContext != null) {
-        return CheckIsCompilable(usageContext.thisId, usageContext);
+      } else if (expr is ThisExpr && ownershipContext != null) {
+        ownershipContext.astExplorer.PushAstNode("ThisExpr");
+        var result = CheckIsCompilable(ownershipContext.thisId, ownershipContext);
+        ownershipContext.astExplorer.PopAstNode();
+        return result;
 
       } else if (expr is MemberSelectExpr) {
         var e = (MemberSelectExpr)expr;
+        ownershipContext.astExplorer.PushAstNode("MemberSelectExpr: " + e.Member.Name);
         if (e.Member != null && e.Member.IsGhost) {
           reporter.Error(MessageSource.Resolver, expr, "ghost fields are allowed only in specification contexts");
+          ownershipContext.astExplorer.PopAstNode();
           return Usage.Ordinary;
         }
         var d = e.Member as DatatypeDestructor;
         var s = e.Member as SpecialField;
         if (d != null || s != null) {
           bool linearDestructor = (d == null) ? false : d.CorrespondingFormals.Exists(x => x.IsLinear);
-          var id = ExprAsIdentifier(usageContext, e.Obj);
+          var id = ExprAsIdentifier(ownershipContext, e.Obj);
           if (id != null && (id.Var.IsLinear || id.Var.IsShared)) {
             // Try to share id
-            CheckIsCompilable(e.Obj, usageContext, Usage.Shared);
+            CheckIsCompilable(e.Obj, ownershipContext, Usage.Shared);
+            ownershipContext.astExplorer.PopAstNode();
             return linearDestructor ? Usage.Shared : Usage.Ordinary;
           } else if (linearDestructor) {
-            CheckIsCompilable(e.Obj, usageContext, Usage.Shared);
+            CheckIsCompilable(e.Obj, ownershipContext, Usage.Shared);
+            ownershipContext.astExplorer.PopAstNode();
             return Usage.Shared;
           } else {
-            var u = CheckIsCompilable(e.Obj, usageContext);
+            var u = CheckIsCompilable(e.Obj, ownershipContext);
             if (u != Usage.Shared && u != Usage.Ordinary) {
               reporter.Error(MessageSource.Resolver, expr, "cannot select from linear expression");
             }
+            ownershipContext.astExplorer.PopAstNode();
             return Usage.Ordinary;
           }
         }
 
       } else if (expr is FunctionCallExpr) {
         var e = (FunctionCallExpr)expr;
+        ownershipContext.astExplorer.PushAstNode("FunctionCallExpr: " + e.Function.Name);
         if (e.Function != null) {
           if (e.Function.IsGhost) {
             reporter.Error(MessageSource.Resolver, expr, "function calls are allowed only in specification contexts (consider declaring the function a 'function method')");
+            ownershipContext.astExplorer.PopAstNode();
             return Usage.Ordinary;
           }
-          var functionContext = (usageContext == null) ? null : (usageContext.codeContext as Function);
-          bool insidePureCall = (usageContext == null) ? false : usageContext.insidePureCall;
+          var functionContext = (ownershipContext == null) ? null : (ownershipContext.codeContext as Function);
+          bool insidePureCall = (ownershipContext == null) ? false : ownershipContext.insidePureCall;
           if (e.Function.CallerMustBePure && !insidePureCall && (functionContext == null || !functionContext.ContextIsPure)) {
             if (functionContext != null) {
               reporter.Error(MessageSource.Resolver, e, "cannot call caller_must_be_pure function from function with shared return values, unless function is also marked caller_must_be_pure");
@@ -15239,20 +15341,27 @@ namespace Microsoft.Dafny
             }
           }
           // function is okay, so check all NON-ghost arguments
-          CheckIsCompilable(e.Receiver, usageContext, e.Function.Usage);
+          ownershipContext.astExplorer.StartSubExpressions("receiver");
+          CheckIsCompilable(e.Receiver, ownershipContext, e.Function.Usage);
+          ownershipContext.astExplorer.StopSubExpressions();
+          ownershipContext.astExplorer.StartSubExpressions("formal");
           for (int i = 0; i < e.Function.Formals.Count; i++) {
             var usage = e.Function.Formals[i].Usage;
             if (usage != Usage.Ghost) {
-              CheckIsCompilable(e.Args[i], usageContext, usage);
+              CheckIsCompilable(e.Args[i], ownershipContext, usage);
             }
           }
+          ownershipContext.astExplorer.StopSubExpressions();
           var result = e.Function.Result;
+          ownershipContext.astExplorer.PopAstNode();
           return (result != null) ? result.Usage : Usage.Ordinary;
         }
+        ownershipContext.astExplorer.PopAstNode();
         return Usage.Ordinary;
 
       } else if (expr is DatatypeValue) {
         var e = (DatatypeValue)expr;
+        ownershipContext.astExplorer.PushAstNode("DatatypeValue");
         var dt = e.Ctor.EnclosingDatatype as IndDatatypeDecl;
         bool isLinear = dt != null && dt.IsLinear;
         // check all NON-ghost arguments
@@ -15260,9 +15369,10 @@ namespace Microsoft.Dafny
         for (int i = 0; i < e.Arguments.Count; i++) {
           var usage = e.Ctor.Formals[i].Usage;
           if (usage != Usage.Ghost) {
-            CheckIsCompilable(e.Arguments[i], usageContext, usage);
+            CheckIsCompilable(e.Arguments[i], ownershipContext, usage);
           }
         }
+        ownershipContext.astExplorer.PopAstNode();
         return isLinear ? Usage.Linear : Usage.Ordinary;
 
       } else if (expr is OldExpr) {
@@ -15271,6 +15381,7 @@ namespace Microsoft.Dafny
 
       } else if (expr is UnaryOpExpr) {
         var e = (UnaryOpExpr)expr;
+        ownershipContext.astExplorer.AstNode("UnaryOpExpr");
         if (e.Op == UnaryOpExpr.Opcode.Fresh) {
           reporter.Error(MessageSource.Resolver, expr, "fresh expressions are allowed only in specification and ghost contexts");
           return Usage.Ordinary;
@@ -15282,15 +15393,19 @@ namespace Microsoft.Dafny
 
       } else if (expr is StmtExpr) {
         var e = (StmtExpr)expr;
+        ownershipContext.astExplorer.PushAstNode("StmtExpr");
         // ignore the statement
-        return CheckIsCompilable(e.E, usageContext);
+        var result = CheckIsCompilable(e.E, ownershipContext);
+        ownershipContext.astExplorer.PopAstNode();
 
       } else if (expr is BinaryExpr) {
         var e = (BinaryExpr)expr;
+        ownershipContext.astExplorer.PushAstNode("BinaryExpr: " + e.ResolvedOp);
         switch (e.ResolvedOp_PossiblyStillUndetermined) {
           case BinaryExpr.ResolvedOpcode.RankGt:
           case BinaryExpr.ResolvedOpcode.RankLt:
             reporter.Error(MessageSource.Resolver, expr, "rank comparisons are allowed only in specification and ghost contexts");
+            ownershipContext.astExplorer.PopAstNode();
             return Usage.Ordinary;
           default:
             break;
@@ -15298,62 +15413,74 @@ namespace Microsoft.Dafny
 
       } else if (expr is TernaryExpr) {
         var e = (TernaryExpr)expr;
+        ownershipContext.astExplorer.PushAstNode("TernaryExpr");
         switch (e.Op) {
           case TernaryExpr.Opcode.PrefixEqOp:
           case TernaryExpr.Opcode.PrefixNeqOp:
             reporter.Error(MessageSource.Resolver, expr, "prefix equalities are allowed only in specification and ghost contexts");
+            ownershipContext.astExplorer.PopAstNode();
             return Usage.Ordinary;
           default:
             break;
         }
       } else if (expr is LetExpr) {
         var e = (LetExpr)expr;
+        // ownershipContext.astExplorer.PushAstNode("LetExpr: " + e.LHSs.MapConcat(x => x.Var.Name, ", "));
         if (e.Exact) {
           Contract.Assert(e.LHSs.Count == e.RHSs.Count);
           var i = 0;
-          var uc0 = UsageContext.Copy(usageContext);
+          var uc0 = OwnershipContext.Copy(ownershipContext);
+          ownershipContext.astExplorer.StartSubExpressions("rhs");
           foreach (var ee in e.RHSs) {
             var xs = e.LHSs[i].Vars.ToList();
             if (!xs.All(bv => bv.IsGhost)) {
-              CheckIsCompilable(ee, usageContext, e.Usage);
+              CheckIsCompilable(ee, ownershipContext, e.Usage);
             }
             i++;
           }
-          var borrow = RemoveInnerBorrowed(uc0, usageContext);
+          ownershipContext.astExplorer.StopSubExpressions();
+          var borrow = RemoveInnerBorrowed(uc0, ownershipContext);
           foreach (var x in e.BoundVars) {
             if (x.Usage == Usage.Linear) {
-              usageContext.available.Add(x, Available.Available);
+              ownershipContext.available.Add(x, Available.Available);
             }
           }
-          Usage u = CheckIsCompilable(e.Body, usageContext);
-          MaybeIntroduceLetBang(expr.tok, e.Usage, usageContext, borrow);
-          PopUsageContext(e.tok, uc0, usageContext);
+          ownershipContext.astExplorer.StartSubExpressions("body");
+          Usage u = CheckIsCompilable(e.Body, ownershipContext);
+          ownershipContext.astExplorer.StopSubExpressions();
+          MaybeIntroduceLetBang(expr.tok, e.Usage, ownershipContext, borrow);
+          PopOwnershipContext(e.tok, uc0, ownershipContext);
+          ownershipContext.astExplorer.PopAstNode();
           return u;
         } else {
           Contract.Assert(e.RHSs.Count == 1);
           var lhsVarsAreAllGhost = e.BoundVars.All(bv => bv.IsGhost);
           if (!lhsVarsAreAllGhost) {
-            CheckIsCompilable(e.RHSs[0], usageContext, Usage.Ordinary);
+            CheckIsCompilable(e.RHSs[0], ownershipContext, Usage.Ordinary);
           }
           if (e.BoundVars.ToList().Exists(x => HasLinearity(x.Usage))) {
             reporter.Error(MessageSource.Resolver, expr, "inexact let bindings cannot be linear or shared");
           }
-          var usage = CheckIsCompilable(e.Body, usageContext);
+          var usage = CheckIsCompilable(e.Body, ownershipContext);
 
           // fill in bounds for this to-be-compiled let-such-that expression
           Contract.Assert(e.RHSs.Count == 1);  // if we got this far, the resolver will have checked this condition successfully
           var constraint = e.RHSs[0];
           e.Constraint_Bounds = DiscoverBestBounds_MultipleVars(e.BoundVars.ToList<IVariable>(), constraint, true, ComprehensionExpr.BoundedPool.PoolVirtues.None);
+          ownershipContext.astExplorer.PopAstNode();
           return usage;
         }
       } else if (expr is LambdaExpr) {
         // TODO linear: disallow linear/shared bindings
         var e = expr as LambdaExpr;
+        ownershipContext.astExplorer.PushAstNode("LambdaExpr");
         CheckIsCompilable(e.Body, null, Usage.Ordinary); // cannot propagate linear variables into lambdas
+        ownershipContext.astExplorer.PopAstNode();
         return Usage.Ordinary;
       } else if (expr is ComprehensionExpr) {
         // TODO linear: disallow linear/shared bindings
         var e = (ComprehensionExpr)expr;
+        ownershipContext.astExplorer.PushAstNode("ComprehensionExpr");
         var uncompilableBoundVars = e.UncompilableBoundVars();
         if (uncompilableBoundVars.Count != 0) {
           string what;
@@ -15369,56 +15496,65 @@ namespace Microsoft.Dafny
           foreach (var bv in uncompilableBoundVars) {
             reporter.Error(MessageSource.Resolver, expr, "{0} in non-ghost contexts must be compilable, but Dafny's heuristics can't figure out how to produce or compile a bounded set of values for '{1}'", what, bv.Name);
           }
+          ownershipContext.astExplorer.PopAstNode();
           return Usage.Ordinary;
         }
         // don't recurse down any attributes
         if (e.Range != null) { CheckIsCompilable(e.Range, null, Usage.Ordinary); }
         CheckIsCompilable(e.Term, null, Usage.Ordinary);
+        ownershipContext.astExplorer.PopAstNode();
         return Usage.Ordinary;
 
       } else if (expr is NamedExpr) {
+        ownershipContext.astExplorer.PushAstNode("NamedExpr");
         if (!moduleInfo.IsAbstract)
-          return CheckIsCompilable(((NamedExpr)expr).Body, usageContext);
+          return CheckIsCompilable(((NamedExpr)expr).Body, ownershipContext);
+        ownershipContext.astExplorer.PopAstNode();
         return Usage.Ordinary;
       } else if (expr is ChainingExpression) {
         // We don't care about the different operators; we only want the operands, so let's get them directly from
         // the chaining expression
         var e = (ChainingExpression)expr;
-        e.Operands.ForEach(ee => CheckIsCompilable(ee, usageContext, Usage.Ordinary));
+        ownershipContext.astExplorer.PushAstNode("ChainingExpr");
+        e.Operands.ForEach(ee => CheckIsCompilable(ee, ownershipContext, Usage.Ordinary));
+        ownershipContext.astExplorer.PopAstNode();
         return Usage.Ordinary;
       } else if (expr is ConcreteSyntaxExpression) {
-        return CheckIsCompilable(((ConcreteSyntaxExpression)expr).ResolvedExpression, usageContext);
+        return CheckIsCompilable(((ConcreteSyntaxExpression)expr).ResolvedExpression, ownershipContext);
       } else if (expr is ITEExpr) {
         ITEExpr e = (ITEExpr)expr;
-        var uc0 = UsageContext.Copy(usageContext);
-        CheckIsCompilable(e.Test, usageContext, Usage.Ordinary);
-        var borrow = RemoveInnerBorrowed(uc0, usageContext);
-        UsageContext uc2 = UsageContext.Copy(usageContext);
-        Usage u1 = CheckIsCompilable(e.Thn, usageContext);
-        UsageContext uc1 = usageContext;
+        ownershipContext.astExplorer.PushAstNode("ITEExpr");
+        var uc0 = OwnershipContext.Copy(ownershipContext);
+        CheckIsCompilable(e.Test, ownershipContext, Usage.Ordinary);
+        var borrow = RemoveInnerBorrowed(uc0, ownershipContext);
+        OwnershipContext uc2 = OwnershipContext.Copy(ownershipContext);
+        Usage u1 = CheckIsCompilable(e.Thn, ownershipContext);
+        OwnershipContext uc1 = ownershipContext;
         Usage u2 = CheckIsCompilable(e.Els, uc2);
-        MergeUsageContexts(e.tok, uc1, uc2);
+        MergeOwnershipContexts(e.tok, uc1, uc2);
         foreach (var x in borrow) {
           // If Thn/Els consumed x, (conceptually) introduce let!(x) here
           if (uc1.available[x] != Available.Consumed) {
             // Otherwise, we don't introduce let!(x) here; just propagate the fact that x was Borrowed
-            usageContext.available[x] = Available.Borrowed;
+            ownershipContext.available[x] = Available.Borrowed;
           }
         }
         if (u1 != u2) {
           reporter.Error(MessageSource.Resolver, expr, "In conditional, left branch is {0}, right branch is {1} (both must be same)", UsageName(u1), UsageName(u2));
         }
+        ownershipContext.astExplorer.PopAstNode();
         return u1;
       } else if (expr is MatchExpr) {
         MatchExpr e = (MatchExpr)expr;
-        var uc0 = UsageContext.Copy(usageContext);
-        CheckIsCompilable(e.Source, usageContext, e.Usage);
-        var borrow = RemoveInnerBorrowed(uc0, usageContext);
+        ownershipContext.astExplorer.PushAstNode("MatchExpr");
+        var uc0 = OwnershipContext.Copy(ownershipContext);
+        CheckIsCompilable(e.Source, ownershipContext, e.Usage);
+        var borrow = RemoveInnerBorrowed(uc0, ownershipContext);
         Usage usage = Usage.Ordinary;
         bool isFirst = true;
-        var uc1 = UsageContext.Copy(usageContext);
+        var uc1 = OwnershipContext.Copy(ownershipContext);
         foreach (var c in e.Cases) {
-          UsageContext uc2 = isFirst ? usageContext : UsageContext.Copy(uc1);
+          OwnershipContext uc2 = isFirst ? ownershipContext : OwnershipContext.Copy(uc1);
           foreach (var x in c.Arguments) {
             if (x.Usage == Usage.Linear) {
               uc2.available.Add(x, Available.Available);
@@ -15426,23 +15562,30 @@ namespace Microsoft.Dafny
           }
           Usage u = CheckIsCompilable(c.Body, uc2);
           MaybeIntroduceLetBang(expr.tok, e.Usage, uc2, borrow);
-          PopUsageContext(c.tok, uc1, uc2);
+          PopOwnershipContext(c.tok, uc1, uc2);
           if (isFirst) {
             usage = u;
           } else {
             if (u != usage) {
               reporter.Error(MessageSource.Resolver, c.tok, "In case, previous branch is {0}, current branch is {1} (both must be same)", UsageName(usage), UsageName(u));
             }
-            MergeUsageContexts(e.tok, uc2, usageContext);
+            MergeOwnershipContexts(e.tok, uc2, ownershipContext);
           }
           isFirst = false;
         }
+        ownershipContext.astExplorer.PopAstNode();
         return usage;
+      } else {
+        ownershipContext.astExplorer.PushAstNode(expr.ToString());
       }
+      ownershipContext.astExplorer.StartSubExpressions("subexpr");
 
       foreach (var ee in expr.SubExpressions) {
-        CheckIsCompilable(ee, usageContext, Usage.Ordinary);
+        CheckIsCompilable(ee, ownershipContext, Usage.Ordinary);
       }
+
+      ownershipContext.astExplorer.StopSubExpressions();
+      ownershipContext.astExplorer.PopAstNode();
       return Usage.Ordinary;
     }
 

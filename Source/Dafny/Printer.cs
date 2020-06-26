@@ -41,6 +41,16 @@ namespace Microsoft.Dafny {
       }
     }
 
+    public static string MethodToString(Method expr, int indent, bool printSignatureOnly)
+    {
+      Contract.Requires(expr != null);
+      using (var wr = new System.IO.StringWriter()) {
+        var pr = new Printer(wr);
+        pr.PrintMethod(expr, indent, printSignatureOnly);
+        return wr.ToString();
+      }
+    }
+
     public static string GuardToString(bool isBindingGuard, Expression expr) {
       Contract.Requires(!isBindingGuard || (expr is ExistsExpr && ((ExistsExpr)expr).Range == null));
       using (var wr = new System.IO.StringWriter()) {
