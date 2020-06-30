@@ -3097,9 +3097,7 @@ namespace Microsoft.Dafny
                 if (x.IsLinear) ownershipContext.available.Add(x, Available.Available);
               }
               // NOTE: linearity, functions, ENTRY
-              Console.WriteLine("OXIDE: Function CheckIsCompilable ENTRY");
               CheckIsCompilable(f.Body, ownershipContext, f.Result != null ? f.Result.Usage : Usage.Ordinary);
-              Console.WriteLine("OXIDE: Function CheckIsCompilable EXIT");
               if (!member.IsStatic && member.Usage == Usage.Linear && ownershipContext.available[ownershipContext.thisId.Var] != Available.Consumed) {
                 reporter.Error(MessageSource.Resolver, member.tok, "linear 'this' must be unavailable at function exit");
               }
@@ -15234,10 +15232,9 @@ digraph AST {
     }
 
     void CheckIsCompilable(Expression expr, OwnershipContext ownershipContext, Usage expectedUsage) {
-      System.Console.WriteLine("OXIDE CheckIsCompilable(3): " + expr.ToString());
       IdentifierExpr x = ExprAsIdentifier(ownershipContext, expr);
       if (ownershipContext != null && expectedUsage == Usage.Shared && x != null && x.Var.Usage == Usage.Linear) {
-        ownershipContext.astExplorer.AstNode(expr.ToString() + ": " + x.Var.Name);
+        ownershipContext.astExplorer.AstNode(expr.ToString() + "(name " + x.Var.Name + ")");
         // Try to borrow x
         if (ownershipContext.available[x.Var] == Available.Consumed) {
           reporter.Error(MessageSource.Resolver, expr, "tried to borrow variable, but it was already unavailable");
@@ -15253,13 +15250,12 @@ digraph AST {
     }
 
     Usage CheckIsCompilable(Expression expr, OwnershipContext ownershipContext) {
-      System.Console.WriteLine("OXIDE CheckIsCompilable(2): " + expr.ToString());
       Contract.Requires(expr != null);
       Contract.Requires(expr.WasResolved());  // this check approximates the requirement that "expr" be resolved
 
       if (expr is IdentifierExpr) {
         var e = (IdentifierExpr)expr;
-        ownershipContext.astExplorer.AstNode("IdentifierExpr: " + e.Var.Name);
+        ownershipContext.astExplorer.AstNode("IdentifierExpr(name " + e.Var.Name + ")");
         if (e.Var != null && e.Var.IsLinear) {
           bool ok = false;
           if (ownershipContext != null) {
@@ -15324,7 +15320,7 @@ digraph AST {
 
       } else if (expr is FunctionCallExpr) {
         var e = (FunctionCallExpr)expr;
-        ownershipContext.astExplorer.PushAstNode("FunctionCallExpr: " + e.Function.Name);
+        ownershipContext.astExplorer.PushAstNode("FunctionCallExpr(name " + e.Function.FullName + ")");
         if (e.Function != null) {
           if (e.Function.IsGhost) {
             reporter.Error(MessageSource.Resolver, expr, "function calls are allowed only in specification contexts (consider declaring the function a 'function method')");
@@ -15361,8 +15357,8 @@ digraph AST {
 
       } else if (expr is DatatypeValue) {
         var e = (DatatypeValue)expr;
-        ownershipContext.astExplorer.PushAstNode("DatatypeValue");
         var dt = e.Ctor.EnclosingDatatype as IndDatatypeDecl;
+        ownershipContext.astExplorer.PushAstNode("DatatypeValue(dt " + dt.FullName + ")");
         bool isLinear = dt != null && dt.IsLinear;
         // check all NON-ghost arguments
         // note that if resolution is successful, then |e.Arguments| == |e.Ctor.Formals|
@@ -15400,7 +15396,7 @@ digraph AST {
 
       } else if (expr is BinaryExpr) {
         var e = (BinaryExpr)expr;
-        ownershipContext.astExplorer.PushAstNode("BinaryExpr: " + e.ResolvedOp);
+        ownershipContext.astExplorer.PushAstNode("BinaryExpr(op " + e.ResolvedOp + ")");
         switch (e.ResolvedOp_PossiblyStillUndetermined) {
           case BinaryExpr.ResolvedOpcode.RankGt:
           case BinaryExpr.ResolvedOpcode.RankLt:
@@ -15425,7 +15421,7 @@ digraph AST {
         }
       } else if (expr is LetExpr) {
         var e = (LetExpr)expr;
-        // ownershipContext.astExplorer.PushAstNode("LetExpr: " + e.LHSs.MapConcat(x => x.Var.Name, ", "));
+        ownershipContext.astExplorer.PushAstNode("LetExpr" + e.LHSs.MapConcat(x => "(lhs " + x.Vars.MapConcat(y => y.Name, ",") + ")", ""));
         if (e.Exact) {
           Contract.Assert(e.LHSs.Count == e.RHSs.Count);
           var i = 0;
@@ -15524,13 +15520,19 @@ digraph AST {
       } else if (expr is ITEExpr) {
         ITEExpr e = (ITEExpr)expr;
         ownershipContext.astExplorer.PushAstNode("ITEExpr");
+        ownershipContext.astExplorer.StartSubExpressions("if");
         var uc0 = OwnershipContext.Copy(ownershipContext);
         CheckIsCompilable(e.Test, ownershipContext, Usage.Ordinary);
+        ownershipContext.astExplorer.StopSubExpressions();
         var borrow = RemoveInnerBorrowed(uc0, ownershipContext);
+        ownershipContext.astExplorer.StartSubExpressions("then");
         OwnershipContext uc2 = OwnershipContext.Copy(ownershipContext);
         Usage u1 = CheckIsCompilable(e.Thn, ownershipContext);
+        ownershipContext.astExplorer.StopSubExpressions();
+        ownershipContext.astExplorer.StartSubExpressions("else");
         OwnershipContext uc1 = ownershipContext;
         Usage u2 = CheckIsCompilable(e.Els, uc2);
+        ownershipContext.astExplorer.StopSubExpressions();
         MergeOwnershipContexts(e.tok, uc1, uc2);
         foreach (var x in borrow) {
           // If Thn/Els consumed x, (conceptually) introduce let!(x) here
@@ -15548,11 +15550,14 @@ digraph AST {
         MatchExpr e = (MatchExpr)expr;
         ownershipContext.astExplorer.PushAstNode("MatchExpr");
         var uc0 = OwnershipContext.Copy(ownershipContext);
+        ownershipContext.astExplorer.StartSubExpressions("match");
         CheckIsCompilable(e.Source, ownershipContext, e.Usage);
+        ownershipContext.astExplorer.StopSubExpressions();
         var borrow = RemoveInnerBorrowed(uc0, ownershipContext);
         Usage usage = Usage.Ordinary;
         bool isFirst = true;
         var uc1 = OwnershipContext.Copy(ownershipContext);
+        ownershipContext.astExplorer.StartSubExpressions("case");
         foreach (var c in e.Cases) {
           OwnershipContext uc2 = isFirst ? ownershipContext : OwnershipContext.Copy(uc1);
           foreach (var x in c.Arguments) {
@@ -15573,6 +15578,7 @@ digraph AST {
           }
           isFirst = false;
         }
+        ownershipContext.astExplorer.StopSubExpressions();
         ownershipContext.astExplorer.PopAstNode();
         return usage;
       } else {
