@@ -5450,6 +5450,8 @@ namespace Microsoft.Dafny {
       get;
     }
     Usage usage;  // readonly after resolution
+    public uint? OwnershipRegion = null;
+    public String OwnershipVariableId = null;
     public Usage Usage {
       get {
         return usage;
@@ -7131,6 +7133,7 @@ namespace Microsoft.Dafny {
     readonly string name;
     public Attributes Attributes;
     public Usage Usage;
+    public uint? Region = null;
     [ContractInvariantMethod]
     void ObjectInvariant() {
       Contract.Invariant(name != null);
