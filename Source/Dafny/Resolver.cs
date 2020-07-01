@@ -3060,11 +3060,18 @@ namespace Microsoft.Dafny
                 ownershipContext.available.Add(ownershipContext.thisId.Var, Available.Available);
               }
               foreach (Formal x in m.Ins) {
+                // if (x.Usage == Usage.Shared || x.Usage == Usage.Linear) {
+                //   x.OwnershipVariableId = ownershipContext.astExplorer.NextVariableId(x.Name);
+                //   if (x.Usage == Usage.Shared) {
+                //     x.OwnershipRegion = ownershipContext.astExplorer.NextRegionId();
+                //   }
+                // }
                 if (x.IsLinear) ownershipContext.available.Add(x, Available.Available);
               }
               foreach (Formal x in m.Outs) {
                 if (x.IsLinear) ownershipContext.available.Add(x, Available.Consumed);
               }
+              ownershipContext.astExplorer.StartMethod(cl, m, "");
               OwnershipContext outer = OwnershipContext.Copy(ownershipContext);
               ownershipContext = ComputeGhostInterest(m.Body, m.IsGhost, m, ownershipContext);
               CheckExpression(m.Body, this, m);
@@ -3094,9 +3101,18 @@ namespace Microsoft.Dafny
                 ownershipContext.available.Add(ownershipContext.thisId.Var, Available.Available);
               }
               foreach (Formal x in f.Formals) {
+                if (x.Usage == Usage.Shared || x.Usage == Usage.Linear) {
+                  x.OwnershipVariableId = ownershipContext.astExplorer.NextVariableId(x.Name);
+                  if (x.Usage == Usage.Shared) {
+                    x.OwnershipRegion = ownershipContext.astExplorer.NextRegionId();
+                  }
+                }
                 if (x.IsLinear) ownershipContext.available.Add(x, Available.Available);
               }
-              // NOTE: linearity, functions, ENTRY
+              ownershipContext.astExplorer.StartFunction(cl, f, "(formals " +
+                f.Formals.MapConcat(y => y.Name + ((y.Usage == Usage.Shared || y.Usage == Usage.Linear) ? "(" + y.OwnershipVariableId + ")" +
+                  (y.Usage == Usage.Shared ? "['_#" + y.OwnershipRegion + "]" : "!") : ""), ",") + ")" +
+                  "(result " + f.Result?.Name + (f.ResultUsage == Usage.Shared ? "['res]" : (f.ResultUsage == Usage.Linear ? "!" : "")) + ")");
               CheckIsCompilable(f.Body, ownershipContext, f.Result != null ? f.Result.Usage : Usage.Ordinary);
               if (!member.IsStatic && member.Usage == Usage.Linear && ownershipContext.available[ownershipContext.thisId.Var] != Available.Consumed) {
                 reporter.Error(MessageSource.Resolver, member.tok, "linear 'this' must be unavailable at function exit");
@@ -14957,9 +14973,11 @@ namespace Microsoft.Dafny
 
     class AstExplorer
     {
-      class AstStackEl {
+      internal class AstStackEl {
         internal String name;
         internal String edgeLabel;
+
+        internal String Label;
       }
 
       internal AstExplorer(ICallable codeContext) {
@@ -14986,6 +15004,25 @@ digraph AST {
       System.Collections.Generic.Stack<AstStackEl> astParentNodes = new System.Collections.Generic.Stack<AstStackEl>();
 
       uint nextRegionId = 1;
+      internal List<String> Path = null;
+
+      internal void StartPath(String basePath) {
+        this.Path = new List<String>();
+        this.Path.Add(basePath);
+      }
+
+      internal String PathToString() {
+        return this.Path == null ? "<null>" : "<" + this.Path.MapConcat(x => x, ".") + ">";
+      }
+
+      internal void StartFunction(TopLevelDeclWithMembers cl, Function function, String more) {
+        this.PushAstNode("class " + cl.Name + " function " + function + more);
+      }
+
+      internal void StartMethod(TopLevelDeclWithMembers cl, Method method, String more) {
+        this.PushAstNode("class " + cl.Name + " method " + method + more);
+      }
+
       internal uint NextRegionId() {
         return nextRegionId++;
       }
@@ -15000,7 +15037,7 @@ digraph AST {
         return "node" + this.astNextNodeId;
       }
 
-      internal String AstNode(String label) {
+      String startAstNode() {
         var nodeId = AstNextNodeId();
         if (astParentNodes.Count > 0) {
           var top = astParentNodes.Peek();
@@ -15010,17 +15047,29 @@ digraph AST {
           }
           this.astWriter.WriteLine();
         }
-        this.astWriter.WriteLine(nodeId + " [shape=\"none\", label=\"" + label + "\"]");
         return nodeId;
       }
 
-      internal void PushAstNode(String label) {
-        var nodeId = AstNode(label);
-        astParentNodes.Push(new AstStackEl { name = nodeId, edgeLabel = null });
+      internal AstStackEl PushAstNode() {
+        return PushAstNode(null);
+      }
+
+      internal AstStackEl PushAstNode(String label) {
+        var nodeId = startAstNode();
+        var node = new AstStackEl { name = nodeId, edgeLabel = null, Label = (label ?? "") };
+        astParentNodes.Push(node);
+        return node;
       }
 
       internal void PopAstNode() {
-        astParentNodes.Pop();
+        var node = astParentNodes.Pop();
+        this.astWriter.WriteLine(node.name + " [shape=\"none\", label=\"" + node.Label + "\"]");
+      }
+
+      internal void AstNode(String label) {
+        var node = PushAstNode();
+        node.Label = label;
+        PopAstNode();
       }
       
       internal void StartSubExpressions(String label) {
@@ -15032,6 +15081,7 @@ digraph AST {
       }
 
       internal void Done() {
+        this.PopAstNode();
         Contract.Assert(astParentNodes.Count == 0);
         astWriter.WriteLine("}");
         astWriter.Close();
@@ -15268,7 +15318,11 @@ digraph AST {
             
       if (expr is IdentifierExpr) {
         var e = (IdentifierExpr)expr;
-        ownershipContext.astExplorer.AstNode("IdentifierExpr(name " + e.Var.Name + ")");
+        var ownershipNode = ownershipContext.astExplorer.PushAstNode("IdentifierExpr(name " + e.Var.Name + ")");
+        if (e.Var != null && (e.Var.Usage == Usage.Shared || e.Var.Usage == Usage.Linear)) {
+          ownershipNode.Label += "(var " + e.Var.GetOwnershipVariableId + ")";
+          ownershipContext.astExplorer.StartPath(e.Var.GetOwnershipVariableId);
+        }
         if (e.Var != null && e.Var.IsLinear) {
           bool ok = false;
           if (ownershipContext != null) {
@@ -15289,8 +15343,10 @@ digraph AST {
         }
         if (e.Var != null && e.Var.IsGhost) {
           reporter.Error(MessageSource.Resolver, expr, "ghost variables are allowed only in specification contexts");
+          ownershipContext.astExplorer.PopAstNode();
           return Usage.Ordinary;
         }
+        ownershipContext.astExplorer.PopAstNode();
         return e.Var.Usage;
 
       } else if (expr is ThisExpr && ownershipContext != null) {
@@ -15310,10 +15366,12 @@ digraph AST {
         if (d != null || s != null) {
           bool linearDestructor = (d == null) ? false : d.CorrespondingFormals.Exists(x => x.IsLinear);
           var id = ExprAsIdentifier(ownershipContext, e.Obj);
-          ownershipContext.astExplorer.PushAstNode("MemberSelectExpr ." + e.Member.Name + "(ExprAsIdentifier " + (id == null ? "null" : (id.ToString() + ":" + id.Var?.Name)) + ")");
+          var ownershipNode = ownershipContext.astExplorer.PushAstNode("MemberSelectExpr ." + e.Member.Name + "(ExprAsIdentifier " + (id == null ? "null" : (id.ToString() + ":" + id.Var?.Name)) + ")");
           if (id != null && (id.Var.IsLinear || id.Var.IsShared)) {
             // Try to share id
             CheckIsCompilable(e.Obj, ownershipContext, Usage.Shared);
+            ownershipContext.astExplorer.Path?.Add(e.Member.Name);
+            ownershipNode.Label += ownershipContext.astExplorer.PathToString();
             ownershipContext.astExplorer.PopAstNode();
             return linearDestructor ? Usage.Shared : Usage.Ordinary;
           } else if (linearDestructor) {
@@ -15325,6 +15383,10 @@ digraph AST {
             if (u != Usage.Shared && u != Usage.Ordinary) {
               reporter.Error(MessageSource.Resolver, expr, "cannot select from linear expression");
             }
+            if (u == Usage.Shared || u == Usage.Linear) {
+              ownershipContext.astExplorer.Path?.Add(e.Member.Name);
+              ownershipNode.Label += ownershipContext.astExplorer.PathToString();
+            }
             ownershipContext.astExplorer.PopAstNode();
             return Usage.Ordinary;
           }
@@ -15332,7 +15394,16 @@ digraph AST {
 
       } else if (expr is FunctionCallExpr) {
         var e = (FunctionCallExpr)expr;
-        ownershipContext.astExplorer.PushAstNode("FunctionCallExpr(name " + e.Function.FullName + ")");
+        var result = e.Function.Result;
+        if (result != null && (result.Usage == Usage.Shared || result.Usage == Usage.Linear)) {
+          e.ResultOwnershipVariableId = ownershipContext.astExplorer.NextVariableId("?");
+          if (result.Usage == Usage.Shared) {
+            e.ResultOwnershipRegion = ownershipContext.astExplorer.NextRegionId();
+          }
+        }
+        var ownershipNode = ownershipContext.astExplorer.PushAstNode("FunctionCallExpr(name " + e.Function.FullName + ")" +
+            (result != null ? "(result " + ((result.Usage == Usage.Linear || result.Usage == Usage.Shared) ? "(" + e.ResultOwnershipVariableId + ")" +
+            (result.Usage == Usage.Shared ? "['_#" + e.ResultOwnershipRegion + "]" : "!") : "") + ")" : ""));
         if (e.Function != null) {
           if (e.Function.IsGhost) {
             reporter.Error(MessageSource.Resolver, expr, "function calls are allowed only in specification contexts (consider declaring the function a 'function method')");
@@ -15360,7 +15431,8 @@ digraph AST {
             }
           }
           ownershipContext.astExplorer.StopSubExpressions();
-          var result = e.Function.Result;
+          ownershipContext.astExplorer.StartPath(e.ResultOwnershipVariableId);
+          ownershipNode.Label += ownershipContext.astExplorer.PathToString();
           ownershipContext.astExplorer.PopAstNode();
           return (result != null) ? result.Usage : Usage.Ordinary;
         }
@@ -15445,8 +15517,8 @@ digraph AST {
           }
         }
         ownershipContext.astExplorer.PushAstNode("LetExpr" + e.LHSs.MapConcat(x => "(lhs " + x.Vars.MapConcat(
-          y => y.Name + ((y.Usage == Usage.Linear || y.Usage == Usage.Shared) ? "(" + y.OwnershipVariableId + ")" : "") +
-            (y.Usage == Usage.Shared ? "['_#" + y.OwnershipRegion + "]" : ""), ",") + ")", "") + "(body " + e.Body.ToString() + ")");
+          y => y.Name + ((y.Usage == Usage.Linear || y.Usage == Usage.Shared) ? "(" + y.OwnershipVariableId + ")" +
+            (y.Usage == Usage.Shared ? "['_#" + y.OwnershipRegion + "]" : "!") : ""), ",") + ")", "") + "(body " + e.Body.ToString() + ")");
         if (e.Exact) {
           Contract.Assert(e.LHSs.Count == e.RHSs.Count);
           var i = 0;

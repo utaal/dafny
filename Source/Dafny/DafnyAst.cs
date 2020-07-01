@@ -5264,6 +5264,9 @@ namespace Microsoft.Dafny {
     Usage Usage {
       get;
     }
+    String GetOwnershipVariableId {
+      get;
+    }
     IToken Tok {
       get;
     }
@@ -5332,6 +5335,11 @@ namespace Microsoft.Dafny {
       }
     }
     public Usage Usage {
+      get {
+        throw new NotImplementedException();
+      }
+    }
+    public String GetOwnershipVariableId {
       get {
         throw new NotImplementedException();
       }
@@ -5473,6 +5481,11 @@ namespace Microsoft.Dafny {
     public bool IsShared {
       get {
         return Usage == Usage.Shared;
+      }
+    }
+    public String GetOwnershipVariableId {
+      get {
+        return this.OwnershipVariableId;
       }
     }
     public IToken Tok {
@@ -7134,6 +7147,8 @@ namespace Microsoft.Dafny {
     public Attributes Attributes;
     public Usage Usage;
     public uint? Region = null;
+
+    public String OwnershipVariableId;
     [ContractInvariantMethod]
     void ObjectInvariant() {
       Contract.Invariant(name != null);
@@ -7242,6 +7257,11 @@ namespace Microsoft.Dafny {
     Usage IVariable.Usage {
       get {
         return this.Usage;
+      }
+    }
+    public String GetOwnershipVariableId {
+      get {
+        return this.OwnershipVariableId;
       }
     }
     /// <summary>
@@ -9458,6 +9478,9 @@ namespace Microsoft.Dafny {
     }
     public CoCallResolution CoCall = CoCallResolution.No;  // indicates whether or not the call is a co-recursive call; filled in by resolution
     public string CoCallHint = null;  // possible additional hint that can be used in verifier error message, filled in by resolver
+
+    public uint? ResultOwnershipRegion = null;
+    public String ResultOwnershipVariableId = null;
 
     [ContractInvariantMethod]
     void ObjectInvariant() {
