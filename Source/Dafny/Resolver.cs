@@ -7356,7 +7356,7 @@ namespace Microsoft.Dafny
           } else {
             if (gk == AssignStmt.NonGhostKind.Field) {
               var mse = (MemberSelectExpr)lhs;
-              resolver.CheckIsCompilable(mse.Obj, ownershipContext, mse.Member.IsGhost ? Usage.Ghost : Usage.Ordinary);
+              resolver.CheckIsCompilable(mse.Obj, ownershipContext, mse.Mut ? Usage.Linear : (mse.Member.IsGhost ? Usage.Ghost : Usage.Ordinary));
             } else if (gk == AssignStmt.NonGhostKind.ArrayElement) {
               resolver.CheckIsCompilable(lhs, ownershipContext, Usage.Ordinary);
             }
@@ -7367,6 +7367,16 @@ namespace Microsoft.Dafny
             if (s.Rhs is ExprRhs) {
               var rhs = (ExprRhs)s.Rhs;
               Usage expectedUsage = x != null ? x.Var.Usage : Usage.Ordinary;
+              {
+                var mse = lhs as MemberSelectExpr;
+                var ctors = mse.Obj.Type.AsDatatype?.Ctors;
+                if (ctors.Count != 1) Error(lhs.tok, "todo invalid");
+                var formal = ctors[0].Formals.Find(y => y.Name == mse.MemberName);
+                if (formal != null)
+                {
+                  expectedUsage = formal.Usage;
+                }
+              }
               resolver.CheckIsCompilable(rhs.Expr, ownershipContext, expectedUsage);
               if (x != null && x.Var.IsLinear) {
                 if (ownershipContext.available[x.Var] != Available.Consumed) {
@@ -11511,9 +11521,12 @@ namespace Microsoft.Dafny
       } else if (lhs is MemberSelectExpr) {
         var ll = (MemberSelectExpr)lhs;
         var field = ll.Member as Field;
+        var datatypeDestructor = ll.Member as DatatypeDestructor;
         if (field == null || !field.IsUserMutable) {
           var cf = field as ConstantField;
-          if (inBodyInitContext && cf != null && !cf.IsStatic && cf.Rhs == null) {
+          if (datatypeDestructor != null) {
+            reporter.Warning(MessageSource.Resolver, lhs.tok, "linearity: unsound");
+          } else if (inBodyInitContext && cf != null && !cf.IsStatic && cf.Rhs == null) {
             if (Expression.AsThis(ll.Obj) != null) {
               // it's cool; this field can be assigned to here
             } else {
@@ -14159,7 +14172,7 @@ namespace Microsoft.Dafny
           receiver = new ImplicitThisExpr(expr.tok);
           receiver.Type = GetThisType(expr.tok, (TopLevelDeclWithMembers)member.EnclosingClass);  // resolve here
         }
-        r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall);
+        r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall, false);
       } else if (isLastNameSegment && moduleInfo.Ctors.TryGetValue(name, out pair)) {
         // ----- 2. datatype constructor
         if (pair.Item2) {
@@ -14208,7 +14221,7 @@ namespace Microsoft.Dafny
           reporter.Error(MessageSource.Resolver, expr.tok, "The name {0} ambiguously refers to a static member in one of the modules {1} (try qualifying the member name with the module name)", expr.Name, ambiguousMember.ModuleNames());
         } else {
           var receiver = new StaticReceiverExpr(expr.tok, (ClassDecl)member.EnclosingClass, true);
-          r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall);
+          r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall, false);
         }
 
       } else {
@@ -14457,7 +14470,7 @@ namespace Microsoft.Dafny
             reporter.Error(MessageSource.Resolver, expr.tok, "The name {0} ambiguously refers to a static member in one of the modules {1} (try qualifying the member name with the module name)", expr.SuffixName, ambiguousMember.ModuleNames());
           } else {
             var receiver = new StaticReceiverExpr(expr.tok, (ClassDecl)member.EnclosingClass, true);
-            r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall);
+            r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall, false);
           }
         } else {
           reporter.Error(MessageSource.Resolver, expr.tok, "unresolved identifier: {0}", name);
@@ -14505,7 +14518,7 @@ namespace Microsoft.Dafny
               // nevertheless, continue creating an expression that approximates a correct one
             }
             var receiver = new StaticReceiverExpr(expr.tok, (UserDefinedType)ty.NormalizeExpand(), (TopLevelDeclWithMembers)member.EnclosingClass, false);
-            r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall);
+            r = ResolveExprDotCall(expr.tok, receiver, null, member, args, expr.OptTypeArguments, opts, allowMethodCall, false);
           }
         }
         if (r == null) {
@@ -14522,7 +14535,7 @@ namespace Microsoft.Dafny
           } else {
             receiver = new StaticReceiverExpr(expr.tok, (UserDefinedType)nptype, (TopLevelDeclWithMembers)member.EnclosingClass, false);
           }
-          r = ResolveExprDotCall(expr.tok, receiver, nptype, member, args, expr.OptTypeArguments, opts, allowMethodCall);
+          r = ResolveExprDotCall(expr.tok, receiver, nptype, member, args, expr.OptTypeArguments, opts, allowMethodCall, expr.Mut);
         }
       }
 
@@ -14632,7 +14645,7 @@ namespace Microsoft.Dafny
       return null;
     }
 
-    MemberSelectExpr ResolveExprDotCall(IToken tok, Expression receiver, Type receiverTypeBound/*?*/, MemberDecl member, List<Expression> args, List<Type> optTypeArguments, ResolveOpts opts, bool allowMethodCall) {
+    MemberSelectExpr ResolveExprDotCall(IToken tok, Expression receiver, Type receiverTypeBound/*?*/, MemberDecl member, List<Expression> args, List<Type> optTypeArguments, ResolveOpts opts, bool allowMethodCall, bool isMut) {
       Contract.Requires(tok != null);
       Contract.Requires(receiver != null);
       Contract.Requires(receiver.WasResolved());
@@ -14641,6 +14654,7 @@ namespace Microsoft.Dafny
 
       var rr = new MemberSelectExpr(tok, receiver, member.Name);
       rr.Member = member;
+      rr.Mut = isMut;
 
       // Now, fill in rr.Type.  This requires taking into consideration the type parameters passed to the receiver's type as well as any type
       // parameters used in this NameSegment/ExprDotName.
@@ -15442,16 +15456,18 @@ digraph AST {
       } else if (expr is DatatypeValue) {
         var e = (DatatypeValue)expr;
         var dt = e.Ctor.EnclosingDatatype as IndDatatypeDecl;
-        ownershipContext.astExplorer.PushAstNode("DatatypeValue(dt " + dt.FullName + ")");
         bool isLinear = dt != null && dt.IsLinear;
+        ownershipContext.astExplorer.PushAstNode("DatatypeValue(dt " + dt.FullName + ")" + (isLinear ? "!" : ""));
         // check all NON-ghost arguments
         // note that if resolution is successful, then |e.Arguments| == |e.Ctor.Formals|
+        ownershipContext.astExplorer.StartSubExpressions("arguments");
         for (int i = 0; i < e.Arguments.Count; i++) {
           var usage = e.Ctor.Formals[i].Usage;
           if (usage != Usage.Ghost) {
             CheckIsCompilable(e.Arguments[i], ownershipContext, usage);
           }
         }
+        ownershipContext.astExplorer.StopSubExpressions();
         ownershipContext.astExplorer.PopAstNode();
         return isLinear ? Usage.Linear : Usage.Ordinary;
 

@@ -4536,6 +4536,7 @@ namespace Microsoft.Dafny {
     Linear,
     Inout,
     Ghost,
+    Write,
   }
 
   public abstract class MemberDecl : Declaration {
@@ -9227,6 +9228,7 @@ namespace Microsoft.Dafny {
     public readonly string MemberName;
     public MemberDecl Member;          // filled in by resolution, will be a Field or Function
     public List<Type> TypeApplication; // If Member is a Function or Method, then TypeApplication is the list of type arguments used with the enclosing class and the function/method itself; if it is a Field, then TypeApplication is the list of type arguments used with the enclosing class
+    public bool Mut = false;
 
     public Dictionary<TypeParameter, Type> TypeArgumentSubstitutions() {
       Contract.Requires(WasResolved());
@@ -11685,6 +11687,7 @@ namespace Microsoft.Dafny {
   {
     public readonly string SuffixName;
     public readonly List<Type> OptTypeArguments;
+    public bool Mut;
 
     [ContractInvariantMethod]
     void ObjectInvariant() {

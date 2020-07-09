@@ -266,7 +266,7 @@ namespace Microsoft.Dafny
     public virtual Expression CloneExpr(Expression expr) {
       if (expr == null) {
         return null;
-      } else if (expr is LiteralExpr) {
+      } if (expr is LiteralExpr) {
         var e = (LiteralExpr)expr;
         if (e is StaticReceiverExpr) {
           var ee = (StaticReceiverExpr)e;
@@ -326,14 +326,17 @@ namespace Microsoft.Dafny
         return CloneNameSegment(expr);
       } else if (expr is ExprDotName) {
         var e = (ExprDotName)expr;
-        return new ExprDotName(Tok(e.tok), CloneExpr(e.Lhs), e.SuffixName, e.OptTypeArguments == null ? null : e.OptTypeArguments.ConvertAll(CloneType));
+        var ne = new ExprDotName(Tok(e.tok), CloneExpr(e.Lhs), e.SuffixName, e.OptTypeArguments == null ? null : e.OptTypeArguments.ConvertAll(CloneType));
+        ne.Mut = e.Mut;
+        return ne;
       } else if (expr is ApplySuffix) {
         var e = (ApplySuffix) expr;
         return CloneApplySuffix(e);
       } else if (expr is MemberSelectExpr) {
         var e = (MemberSelectExpr)expr;
-        return new MemberSelectExpr(Tok(e.tok), CloneExpr(e.Obj), e.MemberName);
-
+        var ne = new MemberSelectExpr(Tok(e.tok), CloneExpr(e.Obj), e.MemberName);
+        ne.Mut = e.Mut;
+        return ne;
       } else if (expr is SeqSelectExpr) {
         var e = (SeqSelectExpr)expr;
         return new SeqSelectExpr(Tok(e.tok), e.SelectOne, CloneExpr(e.Seq), CloneExpr(e.E0), CloneExpr(e.E1));

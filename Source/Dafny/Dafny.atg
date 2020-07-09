@@ -1312,7 +1312,7 @@ OtherTypeDecl<DeclModifierData dmod, ModuleDefinition module, out TopLevelDecl t
       (. errors.Deprecated(t, "the semi-colon that used to terminate an opaque-type declaration has been deprecated; in the new syntax, just leave off the semi-colon"); .)
   ]
   .
-GIdentType<bool allowGhostKeyword, bool allowLinearKeyword, bool allowNewKeyword, out IToken/*!*/ id, out Type/*!*/ ty, out Usage usage, out bool isOld>
+GIdentType<bool allowGhostKeyword, bool allowLinearKeyword, bool allowWriteKeyword, bool allowNewKeyword, out IToken/*!*/ id, out Type/*!*/ ty, out Usage usage, out bool isOld>
 /* usage always returns Ordinary if allowGhostKeyword is false */
 = (. Contract.Ensures(Contract.ValueAtReturn(out id)!=null);
      Contract.Ensures(Contract.ValueAtReturn(out ty)!=null);
@@ -1321,6 +1321,7 @@ GIdentType<bool allowGhostKeyword, bool allowLinearKeyword, bool allowNewKeyword
   | "inout"                    (. if (allowGhostKeyword) { usage = Usage.Inout; } else { SemErr(t, "formal cannot be declared 'inout' in this context"); } .)
   | "linear"                   (. if (allowLinearKeyword) { usage = Usage.Linear; } else { SemErr(t, "formal cannot be declared 'linear' in this context"); } .)
   | "shared"                   (. if (allowLinearKeyword) { usage = Usage.Shared; } else { SemErr(t, "formal cannot be declared 'shared' in this context"); } .)
+  | "write"                    (. if (allowWriteKeyword) { usage = Usage.Write; } else { SemErr(t, "formal cannot be declared 'write' in this context"); } .)
   | "new"                      (. if (allowNewKeyword) { isOld = false; } else { SemErr(t, "formal cannot be declared 'new' in this context"); } .)
   }
   IdentType<out id, out ty, true>
@@ -1432,11 +1433,11 @@ IteratorDecl<DeclModifierData dmod, ModuleDefinition module, out IteratorDecl/*!
   NoUSIdent<out id>
   (
     [ GenericParameters<typeArgs, true> ]
-    Formals<true, true, false, ins>
+    Formals<true, true, false, false, ins>
     [ ( "yields"
       | "returns"           (. SemErr(t, "iterators don't have a 'returns' clause; did you mean 'yields'?"); .)
       )
-      Formals<false, true, false, outs>
+      Formals<false, true, false, false, outs>
     ]
   | "..."                                       (. signatureEllipsis = t; .)
   )
@@ -1584,9 +1585,9 @@ MethodDecl<DeclModifierData dmod, bool allowConstructor, bool isWithinAbstractMo
     [ KType<ref kType>              (. if (!(isCoLemma || isIndLemma)) { SemErr(t, "type of _k can only be specified for inductive lemmas and co-lemmas"); } .)
     ]
     (. var isCompilable = (isPlainOlMethod && dmod.Usage != Usage.Ghost) || isConstructor; .)
-    Formals<true, isCompilable, isTwoStateLemma, ins>
+    Formals<true, isCompilable, isPlainOlMethod, isTwoStateLemma, ins>
     [ "returns"                                 (. if (isConstructor) { SemErr(t, "constructors cannot have out-parameters"); } .)
-      Formals<false, isCompilable, false, outs>
+      Formals<false, isCompilable, isPlainOlMethod, false, outs>
     ]
   | "..."                                       (. signatureEllipsis = t; .)
   )
@@ -1712,7 +1713,7 @@ IteratorSpec<.List<FrameExpression/*!*/>/*!*/ reads, List<FrameExpression/*!*/>/
   | "decreases" { Attribute<ref decrAttrs> } DecreasesList<decreases, false, false> OldSemi
   )
   .
-Formals<.bool incoming, bool allowGhostKeyword, bool allowNewKeyword, List<Formal> formals.>
+Formals<.bool incoming, bool allowGhostKeyword, bool allowWriteKeyword, bool allowNewKeyword, List<Formal> formals.>
 = (. Contract.Requires(cce.NonNullElements(formals));
      IToken id;
      Type ty;
@@ -1721,9 +1722,9 @@ Formals<.bool incoming, bool allowGhostKeyword, bool allowNewKeyword, List<Forma
   .)
   "("
   [
-    GIdentType<allowGhostKeyword, allowGhostKeyword, allowNewKeyword, out id, out ty, out usage, out isOld>
+    GIdentType<allowGhostKeyword, allowGhostKeyword, allowWriteKeyword, allowNewKeyword, out id, out ty, out usage, out isOld>
                  (. formals.Add(new Formal(id, id.val, ty, incoming, usage, isOld)); .)
-    { "," GIdentType<allowGhostKeyword, allowGhostKeyword, allowNewKeyword, out id, out ty, out usage, out isOld>
+    { "," GIdentType<allowGhostKeyword, allowGhostKeyword, allowWriteKeyword, allowNewKeyword, out id, out ty, out usage, out isOld>
                  (. formals.Add(new Formal(id, id.val, ty, incoming, usage, isOld)); .)
     }
   ]
@@ -1935,7 +1936,7 @@ FunctionDecl<DeclModifierData dmod, bool isWithinAbstractModule, out Function/*!
     FuMe_Ident<out id>
     (
       [ GenericParameters<typeArgs, false> ]
-      Formals<true, isFunctionMethod, isTwoState, formals>
+      Formals<true, isFunctionMethod, false, isTwoState, formals>
       ":"
       (  IF(FollowedByColon())
          "("
@@ -1945,7 +1946,7 @@ FunctionDecl<DeclModifierData dmod, bool isWithinAbstractModule, out Function/*!
               Usage usage;
               bool isOld;
            .)
-           GIdentType<false, true, false, out resultId, out ty, out usage, out isOld>
+           GIdentType<false, true, true, false, out resultId, out ty, out usage, out isOld>
            (. Contract.Assert(usage != Usage.Ghost && !isOld);
               result = new Formal(resultId, resultId.val, ty, false, usage, false);
            .)
@@ -1979,7 +1980,7 @@ FunctionDecl<DeclModifierData dmod, bool isWithinAbstractModule, out Function/*!
     NoUSIdent<out id>
     (
       [ GenericParameters<typeArgs, false> ]                 (. missingOpenParen = true; .)
-      [ Formals<true, isFunctionMethod, isTwoState, formals> (. missingOpenParen = false; .)
+      [ Formals<true, isFunctionMethod, false, isTwoState, formals> (. missingOpenParen = false; .)
       ]                                                 (. if (missingOpenParen) { errors.Warning(t, "with the new support of higher-order functions in Dafny, parentheses-less predicates are no longer supported; in the new syntax, parentheses are required for the declaration and uses of predicates, even if the predicate takes no additional arguments"); } .)
       [ ":"                    (. SemErr(t, "predicates do not have an explicitly declared return type; it is always bool"); .)
       ]
@@ -1998,7 +1999,7 @@ FunctionDecl<DeclModifierData dmod, bool isWithinAbstractModule, out Function/*!
     (
       [ GenericParameters<typeArgs, false> ]
       [ KType<ref kType> ]
-      Formals<true, isFunctionMethod, false, formals>
+      Formals<true, isFunctionMethod, false, false, formals>
       [ ":"                    (. SemErr(t, "inductive predicates do not have an explicitly declared return type; it is always bool"); .)
       ]
     | "..."                    (. signatureEllipsis = t; .)
@@ -2016,7 +2017,7 @@ FunctionDecl<DeclModifierData dmod, bool isWithinAbstractModule, out Function/*!
     (
       [ GenericParameters<typeArgs, false> ]
       [ KType<ref kType> ]
-      Formals<true, isFunctionMethod, false, formals>
+      Formals<true, isFunctionMethod, false, false, formals>
       [ ":"                    (. SemErr(t, "copredicates do not have an explicitly declared return type; it is always bool"); .)
       ]
     | "..."                    (. signatureEllipsis = t; .)
@@ -3388,13 +3389,16 @@ UnaryExpression<out Expression e, bool allowSemi, bool allowLambda, bool allowBi
   .
 Lhs<out Expression e>
 = (. e = dummyExpr;  // the assignment is to please the compiler, the dummy value to satisfy contracts in the event of a parse error
+     bool isMut = false;
   .)
-  ( NameSegment<out e>
+  ( ["mut" (. isMut = true; .)] NameSegment<out e>
     { Suffix<ref e> }
   | ConstAtomExpression<out e, false, false>
     Suffix<ref e>
     { Suffix<ref e> }
   )
+  (. ExprDotName edn = e as ExprDotName;
+     if (edn != null) { edn.Mut = isMut; } .)
   .
 
 /* A ConstAtomExpression is never an l-value, and does not start with an identifier. */
