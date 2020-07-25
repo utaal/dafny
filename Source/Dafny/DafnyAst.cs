@@ -7002,6 +7002,8 @@ namespace Microsoft.Dafny {
     }
 
     public bool InoutGenerated = false;
+    
+    public Expression InoutAssignTarget = null;
 
     public readonly List<Statement> ResolvedStatements = new List<Statement>();  // contents filled in during resolution
     public override IEnumerable<Statement> SubStatements {
