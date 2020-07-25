@@ -3207,13 +3207,18 @@ List<Expression> decreases, ref Attributes decAttrs, ref Attributes modAttrs, st
 		Expression suchThat = null;
 		IToken exceptionExpect = null;
 		Expression exceptionExpr = null;
-		bool inoutThis = false;
+		bool inoutUpdate = false;
 		IToken inoutTok = null;
+		bool ghostInoutUpdate = false;
 		
 		if (StartOf(28)) {
 			if (la.kind == 77) {
 				Get();
-				inoutThis = true; inoutTok = t; 
+				inoutUpdate = true; inoutTok = t; 
+				if (la.kind == 73) {
+					Get();
+					ghostInoutUpdate = true; 
+				}
 			}
 			Lhs(out e);
 			x = e.tok; 
@@ -3222,13 +3227,13 @@ List<Expression> decreases, ref Attributes decAttrs, ref Attributes modAttrs, st
 					Attribute(ref attrs);
 				}
 				Expect(35);
-				endTok = t; ExprRhs exprRhs = new ExprRhs(e, attrs); exprRhs.InoutThis = inoutThis; rhss.Add(exprRhs); 
+				endTok = t; ExprRhs exprRhs = new ExprRhs(e, attrs); exprRhs.InoutThis = inoutUpdate; rhss.Add(exprRhs); 
 			} else if (StartOf(29)) {
-				lhss.Add(e); if (inoutThis) { SemErr(inoutTok, "inout not allowed here"); } 
+				lhss.Add(e); 
 				while (la.kind == 27) {
 					Get();
 					Lhs(out e);
-					lhss.Add(e); 
+					lhss.Add(e); if (inoutUpdate) { SemErr(inoutTok, "inout not allowed here"); } 
 				}
 				if (la.kind == 30) {
 					Get();
@@ -3241,6 +3246,7 @@ List<Expression> decreases, ref Attributes decAttrs, ref Attributes modAttrs, st
 						rhss.Add(r); 
 					}
 				} else if (la.kind == 31) {
+					if (inoutUpdate) { SemErr(inoutTok, "inout not allowed here"); } 
 					Get();
 					x = t; 
 					if (la.kind == _assume) {
@@ -3286,7 +3292,11 @@ List<Expression> decreases, ref Attributes decAttrs, ref Attributes modAttrs, st
 		 if (lhss.Count == 0 && rhss.Count == 0) {
 		   s = new BlockStmt(x, endTok, new List<Statement>()); // error, give empty statement
 		 } else {
-		   s = new UpdateStmt(x, endTok, lhss, rhss);
+		   UpdateStmt updateStmt = new UpdateStmt(x, endTok, lhss, rhss);
+		   updateStmt.InoutAssign = inoutUpdate ? (
+		      ghostInoutUpdate ? InoutAssign.Ghost : InoutAssign.Ordinary) :
+		      InoutAssign.No;
+		   s = updateStmt;
 		 }
 		}
 		

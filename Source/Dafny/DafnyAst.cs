@@ -6986,10 +6986,20 @@ namespace Microsoft.Dafny {
     }
   }
 
+  public enum InoutAssign { No, Ordinary, Ghost, }
+
   public class UpdateStmt : ConcreteUpdateStatement
   {
     public readonly List<AssignmentRhs> Rhss;
     public readonly bool CanMutateKnownState;
+
+    public InoutAssign InoutAssign = InoutAssign.No;
+
+    public bool IsInoutAssign {
+      get {
+        return this.InoutAssign == InoutAssign.Ordinary || this.InoutAssign == InoutAssign.Ghost;
+      }
+    }
 
     public bool InoutGenerated = false;
 

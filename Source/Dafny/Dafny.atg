@@ -2271,20 +2271,24 @@ UpdateStmt<out Statement/*!*/ s>
      Expression suchThat = null;
      IToken exceptionExpect = null;
      Expression exceptionExpr = null;
-     bool inoutThis = false;
+     bool inoutUpdate = false;
      IToken inoutTok = null;
+     bool ghostInoutUpdate = false;
   .)
-( ["inout" (. inoutThis = true; inoutTok = t; .) ] Lhs<out e>                       (. x = e.tok; .)
+( [ "inout" (. inoutUpdate = true; inoutTok = t; .)
+    ["ghost" (. ghostInoutUpdate = true; .) ] ]
+  Lhs<out e>                       (. x = e.tok; .)
   ( { Attribute<ref attrs> }
-    ";"                            (. endTok = t; ExprRhs exprRhs = new ExprRhs(e, attrs); exprRhs.InoutThis = inoutThis; rhss.Add(exprRhs); .)
-  |                                (. lhss.Add(e); if (inoutThis) { SemErr(inoutTok, "inout not allowed here"); } .)
-    { "," Lhs<out e>               (. lhss.Add(e); .)
+    ";"                            (. endTok = t; ExprRhs exprRhs = new ExprRhs(e, attrs); exprRhs.InoutThis = inoutUpdate; rhss.Add(exprRhs); .)
+  |                                (. lhss.Add(e); .)
+    { "," Lhs<out e>               (. lhss.Add(e); if (inoutUpdate) { SemErr(inoutTok, "inout not allowed here"); } .)
     }
     ( ":="                         (. x = t; .)
       Rhs<out r>                   (. rhss.Add(r); .)
       { "," Rhs<out r>             (. rhss.Add(r); .)
       }
-    | ":|"                         (. x = t; .)
+    | (. if (inoutUpdate) { SemErr(inoutTok, "inout not allowed here"); } .)
+      ":|" (. x = t; .)
       [ IF(la.kind == _assume)     /* an Expression can also begin with an "assume", so this says to resolve it to pick up any "assume" here */
         "assume"                   (. suchThatAssume = t; .)
       ]
@@ -2317,7 +2321,11 @@ UpdateStmt<out Statement/*!*/ s>
        if (lhss.Count == 0 && rhss.Count == 0) {
          s = new BlockStmt(x, endTok, new List<Statement>()); // error, give empty statement
        } else {
-         s = new UpdateStmt(x, endTok, lhss, rhss);
+         UpdateStmt updateStmt = new UpdateStmt(x, endTok, lhss, rhss);
+         updateStmt.InoutAssign = inoutUpdate ? (
+            ghostInoutUpdate ? InoutAssign.Ghost : InoutAssign.Ordinary) :
+            InoutAssign.No;
+         s = updateStmt;
        }
      }
   .)
@@ -3931,7 +3939,7 @@ HashCall<.IToken id, out IToken openParen, out List<Type> typeArgs, out List<Exp
 SuffixExpression<out ApplySuffixArg arg>
 = (. Expression expr; bool inout = false; bool ghost = false; .)
   // TODO(andrea) allow reordering
-  ["ghost" (. ghost = true; .)] ["inout" (. inout = true; .)] Expression<out expr, true, true>
+  [ "inout" (. inout = true; .) ["ghost" (. ghost = true; .) ] ] Expression<out expr, true, true>
   (. arg = new ApplySuffixArg { Inout = inout, Ghost = ghost, Expr = expr }; .)
   .
 SuffixArgumentExpressions<.List<ApplySuffixArg> args.>
