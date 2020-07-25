@@ -234,7 +234,11 @@ namespace Microsoft.Dafny.Linear {
                     new List<Expression> { updateLhs },
                     new List<AssignmentRhs> { newExprRhs });
                   newUpdStmt.InoutGenerated = true;
-                  newUpdStmt.InoutAssignTarget = updStmt.Lhss[0];
+                  newUpdStmt.InoutAssignTarget =
+                    (updStmt.InoutAssign == InoutAssign.Ghost ? Usage.Ghost : (
+                      (updStmt.InoutAssign == InoutAssign.Ordinary ? Usage.Ordinary :
+                      throw new Exception("invalid InoutAssign"))
+                    ), updStmt.Lhss[0]);
                   stmtList.Insert(s, newUpdStmt);
                   Util.OxideDebug(stmtList[s].Tok, "    " + Printer.StatementToString(stmtList[s]));
                 }

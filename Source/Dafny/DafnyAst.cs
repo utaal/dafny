@@ -7003,7 +7003,7 @@ namespace Microsoft.Dafny {
 
     public bool InoutGenerated = false;
     
-    public Expression InoutAssignTarget = null;
+    public (Usage, Expression)? InoutAssignTarget = null;
 
     public readonly List<Statement> ResolvedStatements = new List<Statement>();  // contents filled in during resolution
     public override IEnumerable<Statement> SubStatements {
@@ -7074,6 +7074,8 @@ namespace Microsoft.Dafny {
   public class AssignStmt : Statement {
     public readonly Expression Lhs;
     public readonly AssignmentRhs Rhs;
+    internal (Usage, Expression)? InoutAssignTarget = null;
+
     [ContractInvariantMethod]
     void ObjectInvariant() {
       Contract.Invariant(Lhs != null);

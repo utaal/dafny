@@ -7390,6 +7390,13 @@ namespace Microsoft.Dafny
             if (x != null && HasLinearity(x.Var.Usage) && !(s.Rhs is ExprRhs)) {
               Error(s, "only expressions can be assigned to linear or shared variables");
             }
+            if (s.InoutAssignTarget.HasValue) {
+              var (inoutAssignTargetUsage, inoutAssignTargetExpr) = s.InoutAssignTarget.Value;
+              Usage exprUsage = resolver.CheckIsCompilable(inoutAssignTargetExpr, usageContext);
+              // if (exprUsage != inoutAssignTargetUsage) {
+              //   // Error(s, )
+              // }
+            }
             if (s.Rhs is ExprRhs) {
               var rhs = (ExprRhs)s.Rhs;
               Usage expectedUsage = x != null ? x.Var.Usage : Usage.Ordinary;
@@ -11284,6 +11291,11 @@ namespace Microsoft.Dafny
           // add the statements here in a sequence, but don't use that sequence later for translation (instead, should translate properly as multi-assignment)
           for (int i = 0; i < update.Lhss.Count; i++) {
             var a = new AssignStmt(update.Tok, update.EndTok, update.Lhss[i].Resolved, update.Rhss[i]);
+            if (i == 0 && update.InoutAssignTarget.HasValue) {
+              var (_, inoutAssignTargetExpr) = update.InoutAssignTarget.Value;
+              ResolveExpression(inoutAssignTargetExpr, new ResolveOpts(codeContext, true));
+              a.InoutAssignTarget = update.InoutAssignTarget;
+            }
             update.ResolvedStatements.Add(a);
           }
         }
@@ -11495,7 +11507,9 @@ namespace Microsoft.Dafny
       if (callee.Ins.Count != s.Args.Count) {
         reporter.Error(MessageSource.Resolver, s, "wrong number of method arguments (got {0}, expected {1})", s.Args.Count, callee.Ins.Count);
       } else if (callee.Ins.Zip(s.Args).Any(z => z.Item1.Inout != z.Item2.Inout)) {
-        foreach (var (fInout, aInout, idx) in callee.Ins.Zip(s.Args).Select((z, index) => (z.Item1.Inout, z.Item2.Inout, index))) {
+        foreach (var (fInout, aInout, idx) in callee.Ins.Zip(s.Args)
+          .Select((z, index) => (z.Item1.Inout, z.Item2.Inout, index))
+          .Where(ff => ff.Item1 != ff.Item2)) {
           if (fInout) {
             reporter.Error(MessageSource.Resolver, s, "method in-parameter {0} should be inout", idx);
           } else {
