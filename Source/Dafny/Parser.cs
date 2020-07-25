@@ -5886,13 +5886,13 @@ List<Expression> decreases, ref Attributes decAttrs, ref Attributes modAttrs, st
 
 	void SuffixExpression(out ApplySuffixArg arg) {
 		Expression expr; bool inout = false; bool ghost = false; 
-		if (la.kind == 73) {
-			Get();
-			ghost = true; 
-		}
 		if (la.kind == 77) {
 			Get();
 			inout = true; 
+			if (la.kind == 73) {
+				Get();
+				ghost = true; 
+			}
 		}
 		Expression(out expr, true, true);
 		arg = new ApplySuffixArg { Inout = inout, Ghost = ghost, Expr = expr }; 
