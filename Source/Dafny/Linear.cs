@@ -231,6 +231,8 @@ namespace Microsoft.Dafny.Linear {
                 newUpdStmt.InoutGenerated = true;
                 stmtList.Insert(s, newUpdStmt);
                 Util.OxideDebug(stmtList[s].Tok, "    " + Printer.StatementToString(stmtList[s]));
+              } else {
+                reporter.Error(MessageSource.Rewriter, stmt.Tok, "invalid rhs for inout update");
               }
             } if (applySuffix != null) {
               var inoutArgs = applySuffix.Args.Where(a => a.Inout).ToList();
