@@ -7393,9 +7393,9 @@ namespace Microsoft.Dafny
             if (s.InoutAssignTarget.HasValue) {
               var (inoutAssignTargetUsage, inoutAssignTargetExpr) = s.InoutAssignTarget.Value;
               Usage exprUsage = resolver.CheckIsCompilable(inoutAssignTargetExpr, usageContext);
-              // if (exprUsage != inoutAssignTargetUsage) {
-              //   // Error(s, )
-              // }
+              if (exprUsage != inoutAssignTargetUsage) {
+                Error(x, "expected {0} lhs, found {1} lhs", UsageName(inoutAssignTargetUsage), UsageName(exprUsage));
+              }
             }
             if (s.Rhs is ExprRhs) {
               var rhs = (ExprRhs)s.Rhs;
